@@ -139,17 +139,14 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
   const [diff, setDiff] = useState<ProgramDiff | null>(null);
   const [dirDiff, setDirDiff] = useState<ProgramDirDiff | null>(null);
   const [selectedFile, setSelectedFile] = useState<ProgramDirDiffFile | null>(null);
-  const [loadingDiff, setLoadingDiff] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
     setLoading(true);
     setError(null);
     setAncestors([]);
     setSiblings([]);
-    setTargetProgram(null);
     setFromSelected(null);
     setToSelected(null);
     setFromPrograms([]);
@@ -159,7 +156,6 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
     setDiff(null);
     fetchIdeaAncestors(runId, ideaId, workerName)
       .then((data) => {
-        if (cancelled) return;
         const fetchedAncestors = data.ancestors || [];
         const fetchedSiblings = data.sibling_programs || [];
         setAncestors(fetchedAncestors);
@@ -194,52 +190,33 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
         setLoading(false);
       })
       .catch((e: unknown) => {
-        if (cancelled) return;
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [runId, ideaId, workerName]);
 
-  // Program locations are directories. List their changed files before loading a file diff.
+  // Program paths are directories; load the changed files first.
+  // 対象はフォルダなので、先に変更されたファイルの一覧を取得する。
   useEffect(() => {
     setDirDiff(null);
     setSelectedFile(null);
     setDiff(null);
-    if (!fromSelected || !toSelected) {
-      setLoadingDiff(false);
-      return;
-    }
-    const fromPath = fromPrograms[fromProgIdx]?.program_info?.path ?? null;
-    const toPath = toPrograms[toProgIdx]?.program_info?.path ?? null;
-    if (!fromPath || !toPath) {
-      setLoadingDiff(false);
-      return;
-    }
+    if (!fromSelected || !toSelected) return;
+    const fromPath = fromPrograms[fromProgIdx]?.program_info?.path;
+    const toPath = toPrograms[toProgIdx]?.program_info?.path;
+    if (!fromPath || !toPath) return;
 
     let cancelled = false;
-    const loadDirectoryDiff = async () => {
-      setError(null);
-      setLoadingDiff(true);
-      try {
-        const payload = await fetchProgramDirDiff(runId, fromPath, toPath);
+    setError(null);
+    fetchProgramDirDiff(runId, fromPath, toPath)
+      .then((data) => {
         if (cancelled) return;
-        setDirDiff(payload);
-        const firstFile = payload.files.find((file) => !file.is_binary) ?? payload.files[0] ?? null;
-        setSelectedFile(firstFile);
-        if (!firstFile || firstFile.is_binary) {
-          setLoadingDiff(false);
-        }
-      } catch (error) {
-        if (cancelled) return;
-        setError(error instanceof Error ? error.message : String(error));
-        setLoadingDiff(false);
-      }
-    };
-
-    void loadDirectoryDiff();
+        setDirDiff(data);
+        setSelectedFile(data.files.find((file) => !file.is_binary) ?? data.files[0] ?? null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
     return () => {
       cancelled = true;
     };
@@ -247,40 +224,21 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
 
   useEffect(() => {
     setDiff(null);
-    if (!selectedFile) return;
     setError(null);
-    if (selectedFile.is_binary) {
-      setLoadingDiff(false);
-      return;
-    }
+    if (!selectedFile || selectedFile.is_binary) return;
 
-    const { from_path: fromPath, to_path: toPath } = selectedFile;
     let cancelled = false;
-    const loadDiff = async () => {
-      setLoadingDiff(true);
-      try {
-        const payload = await fetchProgramDiff(runId, fromPath, toPath);
-        if (cancelled) return;
-        setDiff(payload);
-      } catch (error) {
-        if (cancelled) return;
-        setError(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (!cancelled) {
-          setLoadingDiff(false);
-        }
-      }
-    };
-
-    void loadDiff();
+    fetchProgramDiff(runId, selectedFile.from_path, selectedFile.to_path)
+      .then((data) => {
+        if (!cancelled) setDiff(data);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
     return () => {
       cancelled = true;
     };
   }, [runId, selectedFile]);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedFile(dirDiff?.files[parseInt(e.target.value, 10)] ?? null);
-  };
 
   const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const parsed = parseTargetKey(e.target.value, targetProgram, ancestors, siblings);
@@ -329,6 +287,7 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
     setToProgIdx(prevFromIdx);
   };
 
+  const loadingDiff = !dirDiff || (selectedFile && !selectedFile.is_binary && !diff);
   const hasOptions = ancestors.length > 0 || siblings.length > 0 || targetProgram != null;
 
   return (
@@ -422,9 +381,8 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
         <div className="diff-selector">
           <label>File:</label>
           <select
-            aria-label="File to compare"
             value={selectedFile ? dirDiff.files.indexOf(selectedFile) : ""}
-            onChange={handleFileChange}
+            onChange={(e) => setSelectedFile(dirDiff.files[parseInt(e.target.value, 10)] ?? null)}
           >
             {dirDiff.files.map((file, idx) => (
               <option key={file.relpath} value={idx}>
@@ -452,13 +410,13 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
       {error && <div className="diff-error">Error: {error}</div>}
 
       <div className="diff-content">
-        {loadingDiff && !error && (
+        {loadingDiff && !error && fromSelected && toSelected && (
           <div className="diff-loading">Loading diff...</div>
         )}
-        {!loadingDiff && !error && selectedFile?.is_binary && (
+        {selectedFile?.is_binary && (
           <div className="diff-empty">Binary file: text comparison is not available.</div>
         )}
-        {!loadingDiff && !error && (dirDiff?.files.length === 0 || diff?.lines.length === 0) && (
+        {(dirDiff?.files.length === 0 || diff?.lines.length === 0) && (
           <div className="diff-empty">No differences found.</div>
         )}
         {diff && diff.lines.length > 0 && (
