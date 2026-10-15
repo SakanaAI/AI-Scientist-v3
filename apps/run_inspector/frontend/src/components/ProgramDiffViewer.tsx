@@ -137,14 +137,19 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
   const [toProgIdx, setToProgIdx] = useState<number>(0);
 
   const [diff, setDiff] = useState<ProgramDiff | null>(null);
+  const [dirDiff, setDirDiff] = useState<ProgramDirDiff | null>(null);
+  const [selectedFile, setSelectedFile] = useState<ProgramDirDiffFile | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     setAncestors([]);
     setSiblings([]);
+    setTargetProgram(null);
     setFromSelected(null);
     setToSelected(null);
     setFromPrograms([]);
@@ -154,6 +159,7 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
     setDiff(null);
     fetchIdeaAncestors(runId, ideaId, workerName)
       .then((data) => {
+        if (cancelled) return;
         const fetchedAncestors = data.ancestors || [];
         const fetchedSiblings = data.sibling_programs || [];
         setAncestors(fetchedAncestors);
@@ -188,31 +194,93 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
         setLoading(false);
       })
       .catch((e: unknown) => {
+        if (cancelled) return;
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [runId, ideaId, workerName]);
 
-  // Load diff when program selection changes
+  // Program locations are directories. List their changed files before loading a file diff.
   useEffect(() => {
+    setDirDiff(null);
+    setSelectedFile(null);
+    setDiff(null);
     if (!fromSelected || !toSelected) {
-      setDiff(null);
+      setLoadingDiff(false);
       return;
     }
     const fromPath = fromPrograms[fromProgIdx]?.program_info?.path ?? null;
     const toPath = toPrograms[toProgIdx]?.program_info?.path ?? null;
     if (!fromPath || !toPath) {
-      setDiff(null);
+      setLoadingDiff(false);
       return;
     }
-    setError(null);
-    setDirDiff(null);
-    setSelectedFile(null);
-    setDiff(null);
-    fetchProgramDiff(runId, fromPath, toPath)
-      .then(setDiff)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+
+    let cancelled = false;
+    const loadDirectoryDiff = async () => {
+      setError(null);
+      setLoadingDiff(true);
+      try {
+        const payload = await fetchProgramDirDiff(runId, fromPath, toPath);
+        if (cancelled) return;
+        setDirDiff(payload);
+        const firstFile = payload.files.find((file) => !file.is_binary) ?? payload.files[0] ?? null;
+        setSelectedFile(firstFile);
+        if (!firstFile || firstFile.is_binary) {
+          setLoadingDiff(false);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setError(error instanceof Error ? error.message : String(error));
+        setLoadingDiff(false);
+      }
+    };
+
+    void loadDirectoryDiff();
+    return () => {
+      cancelled = true;
+    };
   }, [runId, fromSelected, toSelected, fromProgIdx, toProgIdx, fromPrograms, toPrograms]);
+
+  useEffect(() => {
+    setDiff(null);
+    if (!selectedFile) return;
+    setError(null);
+    if (selectedFile.is_binary) {
+      setLoadingDiff(false);
+      return;
+    }
+
+    const { from_path: fromPath, to_path: toPath } = selectedFile;
+    let cancelled = false;
+    const loadDiff = async () => {
+      setLoadingDiff(true);
+      try {
+        const payload = await fetchProgramDiff(runId, fromPath, toPath);
+        if (cancelled) return;
+        setDiff(payload);
+      } catch (error) {
+        if (cancelled) return;
+        setError(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (!cancelled) {
+          setLoadingDiff(false);
+        }
+      }
+    };
+
+    void loadDiff();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, selectedFile]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedFile(dirDiff?.files[parseInt(e.target.value, 10)] ?? null);
+  };
 
   const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const parsed = parseTargetKey(e.target.value, targetProgram, ancestors, siblings);
@@ -354,6 +422,7 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
         <div className="diff-selector">
           <label>File:</label>
           <select
+            aria-label="File to compare"
             value={selectedFile ? dirDiff.files.indexOf(selectedFile) : ""}
             onChange={handleFileChange}
           >
@@ -383,13 +452,15 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
       {error && <div className="diff-error">Error: {error}</div>}
 
       <div className="diff-content">
-        {!diff && !error && fromSelected && toSelected && (
+        {loadingDiff && !error && (
           <div className="diff-loading">Loading diff...</div>
         )}
-        {diff && diff.lines.length === 0 && (
+        {!loadingDiff && !error && selectedFile?.is_binary && (
+          <div className="diff-empty">Binary file: text comparison is not available.</div>
+        )}
+        {!loadingDiff && !error && (dirDiff?.files.length === 0 || diff?.lines.length === 0) && (
           <div className="diff-empty">No differences found.</div>
         )}
-        {diff && diff.lines.length === 0 && <div className="diff-empty">No differences found.</div>}
         {diff && diff.lines.length > 0 && (
           <table className="diff-table">
             <tbody>
