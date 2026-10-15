@@ -195,8 +195,7 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
       });
   }, [runId, ideaId, workerName]);
 
-  // Program paths are directories; load the changed files first.
-  // 対象はフォルダなので、先に変更されたファイルの一覧を取得する。
+  // Load diff when program selection changes
   useEffect(() => {
     setDirDiff(null);
     setSelectedFile(null);
