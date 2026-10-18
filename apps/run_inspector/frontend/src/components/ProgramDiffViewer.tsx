@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchIdeaAncestors, fetchProgramDiff, fetchProgramDirDiff } from "../api/client";
+import { defaultDiffFile, emptyDiffMessage } from "./programDiffSelection.js";
 import type {
   AncestorEntry,
   ProgramDiff,
@@ -195,23 +196,24 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
       });
   }, [runId, ideaId, workerName]);
 
+  const fromPath = fromSelected ? fromPrograms[fromProgIdx]?.program_info?.path : undefined;
+  const toPath = toSelected ? toPrograms[toProgIdx]?.program_info?.path : undefined;
+  const missingProgramPath = fromSelected != null && toSelected != null && (!fromPath || !toPath);
+
   // Load diff when program selection changes
   useEffect(() => {
     setDirDiff(null);
     setSelectedFile(null);
     setDiff(null);
-    if (!fromSelected || !toSelected) return;
-    const fromPath = fromPrograms[fromProgIdx]?.program_info?.path;
-    const toPath = toPrograms[toProgIdx]?.program_info?.path;
+    setError(null);
     if (!fromPath || !toPath) return;
 
     let cancelled = false;
-    setError(null);
     fetchProgramDirDiff(runId, fromPath, toPath)
       .then((data) => {
         if (cancelled) return;
         setDirDiff(data);
-        setSelectedFile(data.files.find((file) => !file.is_binary) ?? data.files[0] ?? null);
+        setSelectedFile(defaultDiffFile(data.files));
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -219,7 +221,7 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
     return () => {
       cancelled = true;
     };
-  }, [runId, fromSelected, toSelected, fromProgIdx, toProgIdx, fromPrograms, toPrograms]);
+  }, [runId, fromPath, toPath]);
 
   useEffect(() => {
     setDiff(null);
@@ -409,14 +411,17 @@ export function ProgramDiffViewer({ runId, ideaId, ideaTitle, workerName }: Prog
       {error && <div className="diff-error">Error: {error}</div>}
 
       <div className="diff-content">
-        {loadingDiff && !error && fromSelected && toSelected && (
+        {missingProgramPath && (
+          <div className="diff-empty">No program available for the selected comparison.</div>
+        )}
+        {loadingDiff && !error && !missingProgramPath && fromSelected && toSelected && (
           <div className="diff-loading">Loading diff...</div>
         )}
         {selectedFile?.is_binary && (
           <div className="diff-empty">Binary file: text comparison is not available.</div>
         )}
         {(dirDiff?.files.length === 0 || diff?.lines.length === 0) && (
-          <div className="diff-empty">No differences found.</div>
+          <div className="diff-empty">{emptyDiffMessage(selectedFile)}</div>
         )}
         {diff && diff.lines.length > 0 && (
           <table className="diff-table">
