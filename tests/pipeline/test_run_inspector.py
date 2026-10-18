@@ -426,6 +426,27 @@ def test_parallel_run_views_and_ancestors_across_pruning_with_programs(tmp_path:
     assert any("program_1" in label for label in labels), labels
 
 
+def test_ancestor_programs_list_spec_layout_program_dirs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "task" / "agent"
+    _markers(
+        run_dir,
+        outer={"best_combined_score": 8.0},
+        ideas=[{"idea_id": "idea_001", "title": "Idea 1", "cycle_index": 0},
+               {"idea_id": "idea_002", "title": "Idea 2", "cycle_index": 1}],
+        attempts=[_attempt("att_001", "idea_001", 0, best_updated=True, ts="2026-01-01T00:00:00"),
+                  _attempt("att_002", "idea_002", 1, best_updated=True, ts="2026-01-01T01:00:00")],
+    )
+    for name, idea_id, title in (("01_idea", "idea_001", "Idea 1"), ("02_idea", "idea_002", "Idea 2")):
+        _idea(run_dir / "ideas" / name, idea_id, title)
+        _program(run_dir / "ideas" / name / "01_attempt" / "program_0", score=5.0)
+
+    [run] = _single_run(tmp_path)
+    [ancestor] = build_idea_ancestors(run, "idea_002").ancestors
+
+    assert ancestor.program_info is not None
+    assert [p.program_info.path for p in ancestor.programs] == [ancestor.program_info.path]
+
+
 # ---------------------------------------------------------------------------
 # endpoint routes (called directly; ASGI threadpool can deadlock in the sandbox)
 # ---------------------------------------------------------------------------

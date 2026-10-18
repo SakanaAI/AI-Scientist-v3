@@ -383,6 +383,43 @@ def build_idea_timeline(run: DiscoveredRun) -> IdeaTimeline:
 # ---------------------------------------------------------------------------
 
 
+def _looks_like_program_dir(program_dir: Path) -> bool:
+    # v1 layout
+    if (program_dir / "program_spec.toml").is_file():
+        return True
+    # Legacy layout
+    if (program_dir / "program.py").is_file():
+        return True
+    # Extremely defensive fallback: a src tree usually implies a project layout.
+    if (program_dir / "src").is_dir():
+        return True
+    return False
+
+
+def _program_entries(
+    run: DiscoveredRun, idea_path: Path, *, exclude_path: str | None = None,
+) -> list[SiblingProgramEntry]:
+    """List an idea's program directories as run-relative comparison entries."""
+    from .discovery import _discover_programs_flattened
+
+    entries: list[SiblingProgramEntry] = []
+    for prog in _discover_programs_flattened(idea_path):
+        if not _looks_like_program_dir(prog.dir_path):
+            continue
+        try:
+            rel = prog.dir_path.relative_to(run.path).as_posix()
+        except ValueError:
+            continue
+        if rel == exclude_path:
+            continue
+        entries.append(SiblingProgramEntry(
+            label=prog.display_label,
+            attempt_name=prog.attempt_name,
+            program_info=ProgramLocation(path=rel),
+        ))
+    return entries
+
+
 def _find_best_program_dir(idea_path: Path) -> str | None:
     """Find the best program directory in the last non-empty attempt directory.
 
@@ -391,18 +428,6 @@ def _find_best_program_dir(idea_path: Path) -> str | None:
     that contains one. If there are no attempt sub-directories it falls
     back to ``program_N`` dirs directly under *idea_path*.
     """
-
-    def _looks_like_program_dir(program_dir: Path) -> bool:
-        # v1 layout
-        if (program_dir / "program_spec.toml").is_file():
-            return True
-        # Legacy layout
-        if (program_dir / "program.py").is_file():
-            return True
-        # Extremely defensive fallback: a src tree usually implies a project layout.
-        if (program_dir / "src").is_dir():
-            return True
-        return False
 
     attempt_dirs = _attempt_dirs(idea_path)
     if not attempt_dirs:
@@ -572,24 +597,7 @@ def build_idea_ancestors(
                 except ValueError:
                     pass
 
-        # Collect all programs for this ancestor
-        anc_programs: list[SiblingProgramEntry] = []
-        if anc_path:
-            from .discovery import _discover_programs_flattened
-
-            for prog in _discover_programs_flattened(anc_path):
-                prog_file = prog.dir_path / "program.py"
-                if not prog_file.exists():
-                    continue
-                try:
-                    rel = prog_file.relative_to(run.path).as_posix()
-                except ValueError:
-                    continue
-                anc_programs.append(SiblingProgramEntry(
-                    label=prog.display_label,
-                    attempt_name=prog.attempt_name,
-                    program_info=ProgramLocation(path=rel),
-                ))
+        anc_programs = _program_entries(run, anc_path) if anc_path else []
 
         ancestors.append(AncestorEntry(
             idea_id=cid,
@@ -602,31 +610,9 @@ def build_idea_ancestors(
 
         current = parent_of.get((cwk, cid))
 
-    # Collect sibling programs from the current idea's attempts
-    sibling_programs: list[SiblingProgramEntry] = []
-    if target_path:
-        from .discovery import _discover_programs_flattened
-
-        all_programs = _discover_programs_flattened(target_path)
-        for prog in all_programs:
-            if not (
-                (prog.dir_path / "program_spec.toml").is_file()
-                or (prog.dir_path / "program.py").is_file()
-                or (prog.dir_path / "src").is_dir()
-            ):
-                continue
-            try:
-                rel = prog.dir_path.relative_to(run.path).as_posix()
-            except ValueError:
-                continue
-            # Skip the target program itself (already shown as "current")
-            if target_program and rel == target_program.path:
-                continue
-            sibling_programs.append(SiblingProgramEntry(
-                label=prog.display_label,
-                attempt_name=prog.attempt_name,
-                program_info=ProgramLocation(path=rel),
-            ))
+    # The target program itself is already shown as "current".
+    target_rel = target_program.path if target_program else None
+    sibling_programs = _program_entries(run, target_path, exclude_path=target_rel) if target_path else []
 
     return IdeaAncestors(
         idea_id=idea_id,
