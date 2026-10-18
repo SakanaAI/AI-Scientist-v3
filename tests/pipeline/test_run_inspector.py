@@ -444,7 +444,7 @@ def test_ancestor_programs_list_spec_layout_program_dirs(tmp_path: Path) -> None
     [ancestor] = build_idea_ancestors(run, "idea_002").ancestors
 
     assert ancestor.program_info is not None
-    assert [p.program_info.path for p in ancestor.programs] == [ancestor.program_info.path]
+    assert [p.program_info for p in ancestor.programs] == [ancestor.program_info]
 
 
 # ---------------------------------------------------------------------------
