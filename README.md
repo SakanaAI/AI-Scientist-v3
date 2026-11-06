@@ -292,6 +292,52 @@ from a shipped scaffold for anything beyond a small task, and check the
 drafting audit under `task_drafting/` when a draft is rejected. See
 [docs/task_drafting.md](docs/task_drafting.md).
 
+## Agent skills: set up a task and run a campaign
+
+Two agent skills under [`skills/`](skills/) let a coding agent such as Claude
+Code or Codex do the setup with you. Each skill asks you only for the decisions
+that are yours: the science, the compute, cost and consent. It picks defaults
+for everything else.
+
+- [`setup-task`](skills/setup-task/SKILL.md) turns a research problem,
+  benchmark, or existing repository into a task directory that `agsci run`
+  accepts. It asks about the metric, the editable files, the rules, and the
+  cost of one evaluation. It then writes `task.md`, `evaluate.py`, and a
+  baseline `program_0`, and runs the evaluator on the baseline and on programs
+  that should fail. For small self-contained problems it can write just a
+  `task.md` brief for the drafting phase instead.
+- [`run-campaign`](skills/run-campaign/SKILL.md) launches and monitors a
+  campaign on a validated task. It asks for the agent and model, compute, budget,
+  phases, paper inputs, and consent for external review. It then runs the
+  preflight checks and writes a local or Slurm launch script, which it submits
+  only after your go-ahead. It reports progress with a status summary
+  (`scripts/campaign_status.py`) and resumes or wraps up the run.
+
+Both skills need a clone of this repo with `uv sync` done, because their
+scripts use the harness code. Install them by linking the skill folders into
+your agent's skills directory, from the repo root:
+
+```bash
+for skill in setup-task run-campaign; do
+  mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/$skill" ~/.claude/skills/$skill   # Claude Code
+  mkdir -p ~/.codex/skills && ln -sfn "$PWD/skills/$skill" ~/.codex/skills/$skill     # Codex
+done
+```
+
+To make them available in a single project only, link them into that
+project's `.claude/skills/` instead. Then ask your agent, for example:
+
+```text
+Use the setup-task skill to turn https://github.com/<org>/<benchmark> into an
+AI-Scientist task at ~/tasks/<name>: agents may edit train.py, the score is the
+official eval script, GPUs are available through Slurm partition <p>.
+```
+
+```text
+Use the run-campaign skill to launch ~/tasks/<name> on one node and report its
+status every hour.
+```
+
 ## How it works
 
 Six phases run in sequence: **Task drafting → Investigation → Ablations →
