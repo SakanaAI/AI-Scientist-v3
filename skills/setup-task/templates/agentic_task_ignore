@@ -1,0 +1,7 @@
+# Paths left out of the per-run task snapshot (gitignore-like; leading / anchors to the task root).
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
