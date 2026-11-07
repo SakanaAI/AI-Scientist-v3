@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -525,6 +526,53 @@ def test_validate_latex_recorder_inputs(tmp_path: Path) -> None:
     (root / "alias").symlink_to(skill_file.parent, target_is_directory=True)
     with pytest.raises(RuntimeError, match=RECORDER_SKILL_ERROR):
         _check_recorder(root, f"PWD {root}\nINPUT alias/claim.tex\n")
+
+
+VALIDATE_COMPILE_INPUTS_SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "src/agents/skills/validate-paper/scripts/validate_compile_inputs.py"
+)
+
+
+def _load_validate_compile_inputs() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "validate_compile_inputs_under_test", VALIDATE_COMPILE_INPUTS_SCRIPT
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("implementation", ["paper_step", "skill_script"])
+def test_latex_system_input_symlink_between_approved_roots(
+    tmp_path: Path, implementation: str
+) -> None:
+    # Debian/Ubuntu layout: /usr/share/texmf/web2c/texmf.cnf links into texlive.
+    module = paper_step if implementation == "paper_step" else _load_validate_compile_inputs()
+    texlive = tmp_path / "texlive"
+    texmf = tmp_path / "texmf"
+    (texlive / "web2c").mkdir(parents=True)
+    (texmf / "web2c").mkdir(parents=True)
+    real_cnf = texlive / "web2c" / "texmf.cnf"
+    real_cnf.write_text("% cnf\n", encoding="utf-8")
+    alias_cnf = texmf / "web2c" / "texmf.cnf"
+    alias_cnf.symlink_to(real_cnf)
+    outside = tmp_path / "outside.tex"
+    outside.write_text("secret", encoding="utf-8")
+    escape = texmf / "escape.tex"
+    escape.symlink_to(outside)
+    with patch.object(module, "LATEX_SYSTEM_INPUT_ROOTS", (texlive, texmf)):
+        assert module._is_approved_latex_system_input(alias_cnf)
+        assert module._is_approved_latex_system_input(real_cnf)
+        assert not module._is_approved_latex_system_input(escape)
+        assert not module._is_approved_latex_system_input(outside)
+    if implementation == "paper_step":
+        root = _sub(tmp_path, "paper")
+        with patch.object(paper_step, "LATEX_SYSTEM_INPUT_ROOTS", (texlive, texmf)):
+            _check_recorder(root, f"PWD {root}\nINPUT paper.tex\nINPUT {alias_cnf}\n")
+            with pytest.raises(RuntimeError, match="outside approved TeX roots"):
+                _check_recorder(root, f"PWD {root}\nINPUT {escape}\n")
 
 
 # --------------------------------------------------------------------------------------------
