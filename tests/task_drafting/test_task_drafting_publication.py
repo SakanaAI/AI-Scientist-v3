@@ -294,6 +294,87 @@ def test_publish_task_scaffold_rejects_drift_and_removes_marker(
     assert not fx.marker.exists()
 
 
+def _make_predrafted_fx(root: Path) -> tuple[_Publication, Path]:
+    """A user task that already ships a full scaffold, which drafting then repairs."""
+    fx = _make_fx(root)
+    shutil.rmtree(fx.task_dir)
+    shutil.copytree(fx.staged_task_dir, fx.task_dir)
+    baseline = fx.output_dir / "task_source_baseline.json"
+    publication.record_task_source_baseline(fx.task_dir, baseline)
+    # Alignment repair edits only the staged copy.
+    (fx.staged_task_dir / "evaluate.py").write_text("SEARCH = 'repaired'\n", encoding="utf-8")
+    resource = fx.staged_task_dir / "resources/search/dev.json"
+    resource.write_text('{"repaired": true}\n', encoding="utf-8")
+    contract = json.loads(fx.contract_path.read_text(encoding="utf-8"))
+    for artifact in contract["provenance"]["artifacts"]:
+        if artifact["path"] == "resources/search/dev.json":
+            artifact["sha256"] = _sha256(resource)
+    fx.write_contract(contract)
+    fx.refresh_report()
+    return fx, baseline
+
+
+def test_publish_task_scaffold_replaces_predrafted_source_only_when_it_matches_baseline(
+    tmp_path: Path,
+) -> None:
+    # test_publish_task_scaffold_without_baseline_keeps_rejecting_repaired_predrafted_task
+    fx, _ = _make_predrafted_fx(tmp_path / "no-baseline")
+    with pytest.raises(publication.TaskPublicationError, match="differs from accepted scaffold"):
+        fx.publish()
+    assert not fx.marker.exists()
+
+    # test_publish_task_scaffold_publishes_repaired_scaffold_over_unchanged_source
+    fx, baseline = _make_predrafted_fx(tmp_path / "baseline")
+    fx.publish(source_baseline_path=baseline)
+    assert (fx.task_dir / "evaluate.py").read_bytes() == (
+        fx.staged_task_dir / "evaluate.py"
+    ).read_bytes()
+    assert (fx.task_dir / "resources/search/dev.json").read_bytes() == (
+        fx.staged_task_dir / "resources/search/dev.json"
+    ).read_bytes()
+    assert len(publication.validate_published_task_plan(fx.task_dir)) == 64
+    load_task_alignment_report(fx.marker, scaffold_dir=fx.task_dir)
+    assert not any(path.name.startswith(".resources.") for path in fx.task_dir.iterdir())
+    # Re-running the same publication is a no-op.
+    fx.publish(source_baseline_path=baseline)
+
+    # test_publish_task_scaffold_rejects_source_edited_after_baseline
+    fx, baseline = _make_predrafted_fx(tmp_path / "edited-file")
+    (fx.task_dir / "evaluate.py").write_text("SEARCH = 'user edit'\n", encoding="utf-8")
+    with pytest.raises(publication.TaskPublicationError, match="differs from accepted scaffold"):
+        fx.publish(source_baseline_path=baseline)
+    assert (fx.task_dir / "evaluate.py").read_text(encoding="utf-8") == "SEARCH = 'user edit'\n"
+    assert not fx.marker.exists()
+
+    # test_publish_task_scaffold_rejects_resources_edited_after_baseline
+    fx, baseline = _make_predrafted_fx(tmp_path / "edited-resources")
+    (fx.task_dir / "resources/final/extra.json").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(publication.TaskPublicationError, match="managed task resources"):
+        fx.publish(source_baseline_path=baseline)
+    assert (fx.task_dir / "resources/final/extra.json").is_file()
+
+    # test_record_task_source_baseline_is_write_once_and_skips_symlinks
+    task_dir = tmp_path / "record"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("# one\n", encoding="utf-8")
+    (task_dir / "link.md").symlink_to(task_dir / "task.md")
+    record = tmp_path / "record.json"
+    publication.record_task_source_baseline(task_dir, record)
+    first = record.read_bytes()
+    (task_dir / "task.md").write_text("# two\n", encoding="utf-8")
+    publication.record_task_source_baseline(task_dir, record)
+    assert record.read_bytes() == first
+    payload = json.loads(first)
+    assert set(payload["files"]) == {"task.md"}
+    assert payload["resources_sha256"] is None
+
+    # test_publish_task_scaffold_rejects_invalid_baseline
+    fx, baseline = _make_predrafted_fx(tmp_path / "invalid-baseline")
+    baseline.write_text('{"schema_version": 99}\n', encoding="utf-8")
+    with pytest.raises(publication.TaskPublicationError, match="invalid task source baseline"):
+        fx.publish(source_baseline_path=baseline)
+
+
 def test_publish_task_scaffold_interruptions_retry_exact_plan_and_quarantine_markers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
