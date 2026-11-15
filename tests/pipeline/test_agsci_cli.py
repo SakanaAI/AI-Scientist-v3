@@ -248,7 +248,7 @@ def test_doctor_docker_daemon_failure_only_warns_for_native_runs(
     rc, daemon = run_doctor(
         "examples/circpack",
         "container.enabled=false",
-        'execution.phases="investigation,posthoc,paper"',
+        'execution.phases="investigation,posthoc"',
     )
     assert daemon["status"] == "warn"
     assert "not needed: container.enabled=false" in daemon["detail"]
@@ -257,7 +257,10 @@ def test_doctor_docker_daemon_failure_only_warns_for_native_runs(
     # a host without the docker binary at all passes a native run too
     host = _healthy_host(tmp_path / "no_docker", missing=frozenset({"docker"}))
     host.probe_docker = lambda: (False, "docker CLI is not installed")
-    rc = doctor.main(["--json", "examples/circpack", "container.enabled=false"], host=host)
+    rc = doctor.main(
+        ["--json", "examples/circpack", "container.enabled=false", "execution.phases=investigation"],
+        host=host,
+    )
     checks = {check["name"]: check for check in json.loads(capsys.readouterr().out)["checks"]}
     assert checks["docker"]["status"] == checks["docker daemon"]["status"] == "warn"
     assert rc == 0
@@ -266,7 +269,7 @@ def test_doctor_docker_daemon_failure_only_warns_for_native_runs(
     rc, daemon = run_doctor(
         "examples/circpack",
         "container.enabled=false",
-        'execution.phases="investigation,ablations,posthoc,paper"',
+        'execution.phases="investigation,ablations,posthoc"',
     )
     assert daemon["status"] == "warn"
     assert rc == 0
@@ -277,6 +280,24 @@ def test_doctor_docker_daemon_failure_only_warns_for_native_runs(
 
     rc, daemon = run_doctor()
     assert daemon["status"] == "fail"
+    assert rc == 1
+
+
+def test_doctor_requires_docker_for_a_native_runs_paper_phase(tmp_path, capsys) -> None:
+    def run_doctor(*overrides: str) -> tuple[int, dict[str, dict]]:
+        host = _healthy_host(tmp_path / str(len(overrides)))
+        host.probe_docker = lambda: (False, "permission denied while trying to connect")
+        rc = doctor.main(["--json", "examples/circpack", "container.enabled=false", *overrides], host=host)
+        return rc, {check["name"]: check for check in json.loads(capsys.readouterr().out)["checks"]}
+
+    rc, checks = run_doctor('execution.phases="investigation,paper"')
+    assert checks["paper container"]["status"] == "fail"
+    assert "container.paper_enabled=true" in checks["paper container"]["detail"]
+    assert rc == 1
+
+    rc, checks = run_doctor('execution.phases="investigation,paper"', "container.paper_enabled=true")
+    assert checks["paper container"]["status"] == "ok"
+    assert checks["docker daemon"]["status"] == "fail"  # the paper container needs a working daemon
     assert rc == 1
 
 

@@ -578,9 +578,40 @@ def check_task_scaffold(host: Host, cfg: PipelineConfig) -> CheckResult:
     return CheckResult("task", OK, f"{task_dir.name}: scaffold will be drafted (missing {names})")
 
 
+def _paper_selected(cfg: PipelineConfig) -> bool:
+    from src.pipeline.config import parse_pipeline_phases
+
+    try:
+        return "paper" in parse_pipeline_phases(cfg.execution.phases)
+    except ValueError:
+        return False  # the run itself reports the malformed phase list
+
+
+def uses_docker(cfg: PipelineConfig) -> bool:
+    """Whether any selected phase runs in Docker (a native run may still containerize its paper)."""
+    from src.pipeline.config import phase_uses_container
+
+    return cfg.container.enabled or (_paper_selected(cfg) and phase_uses_container(cfg, "paper"))
+
+
+def check_paper_container(cfg: PipelineConfig) -> CheckResult:
+    from src.pipeline.config import PAPER_NEEDS_CONTAINER_ERROR, phase_uses_container
+
+    if not _paper_selected(cfg):
+        return CheckResult("paper container", OK, "paper phase not selected")
+    if phase_uses_container(cfg, "paper"):
+        return CheckResult("paper container", OK, "paper runs in Docker")
+    return CheckResult(
+        "paper container",
+        FAIL,
+        PAPER_NEEDS_CONTAINER_ERROR,
+        hint="add container.paper_enabled=true (needs Docker and the agent image on this host)",
+    )
+
+
 def run_checks_for(host: Host, cfg: PipelineConfig) -> list[CheckResult]:
-    results = [check_run_summary(cfg)]
-    if cfg.container.enabled:
+    results = [check_run_summary(cfg), check_paper_container(cfg)]
+    if uses_docker(cfg):
         results.append(
             check_agent_image(host, cfg.container.image, network=cfg.container.network, required=True)
         )
@@ -664,7 +695,7 @@ def main(argv: list[str] | None = None, *, host: Host | None = None) -> int:
         if isinstance(cfg, CheckResult):
             results.append(cfg)
         else:
-            if not cfg.container.enabled:
+            if not uses_docker(cfg):
                 results = [docker_optional_for_native_run(result) for result in results]
             results.extend(run_checks_for(host, cfg))
     else:
