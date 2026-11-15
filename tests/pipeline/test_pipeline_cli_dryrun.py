@@ -1076,7 +1076,7 @@ def test_paper_rejects_contract_discovered_in_consumed_snapshot(monkeypatch, tmp
     )
 
     with caplog.at_level("ERROR"):
-        rc = main([CIRCPACK, "execution.phases=paper", f"paths.run_dir={run_dir}", "container.enabled=false", "run_id=test-run"])
+        rc = main([CIRCPACK, "execution.phases=paper", f"paths.run_dir={run_dir}", "container.enabled=false", "container.paper_enabled=true", "run_id=test-run"])
 
     assert rc == 2
     assert any("requires a successful final phase" in message for message in _messages(caplog))
@@ -1256,7 +1256,7 @@ def test_optional_final_outcome_never_blocks_paper(monkeypatch, tmp_path: Path, 
     (final_dir / "final_manifest.json").write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr("src.pipeline.cli._verified_final_outcome", lambda *_args: "not_qualified")
     calls = _capture_commands(monkeypatch)
-    rc = main([CIRCPACK, "execution.phases=paper", f"paths.run_dir={run_dir}", "container.enabled=false", "run_id=20260829_173527"])
+    rc = main([CIRCPACK, "execution.phases=paper", f"paths.run_dir={run_dir}", "container.enabled=false", "container.paper_enabled=true", "run_id=20260829_173527"])
     assert rc == 0
     paper_command = next(command for command in calls if PAPER in command)
     assert "--final-evaluation-dir" not in paper_command
@@ -1280,7 +1280,7 @@ def test_late_phases_keep_fresh_output_and_journal_at_run_root(monkeypatch, tmp_
         commands = _capture_commands(m)
         rc = main([
             CIRCPACK, "execution.phases=posthoc", f"paths.run_dir={investigation}",
-            f"paths.ablations_dir={bundle}", "container.enabled=false", "run_id=test-run",
+            f"paths.ablations_dir={bundle}", "container.enabled=false", "container.paper_enabled=true", "run_id=test-run",
         ])
     assert rc == 0
     assert len(commands) == 1
@@ -1309,7 +1309,7 @@ def test_late_phases_keep_fresh_output_and_journal_at_run_root(monkeypatch, tmp_
     with monkeypatch.context() as m:
         _no_glue(m)
         m.setattr("src.pipeline.cli.run_cmd", assert_fresh_output)
-        rc = main([CIRCPACK, "execution.phases=paper", f"paths.run_dir={run_dir}", "container.enabled=false", "run_id=test-run"])
+        rc = main([CIRCPACK, "execution.phases=paper", f"paths.run_dir={run_dir}", "container.enabled=false", "container.paper_enabled=true", "run_id=test-run"])
     assert rc == 0
     assert any(record["event"] == "paper_gate" for record in _journal(run_dir))
 
@@ -1320,7 +1320,7 @@ def test_late_phases_keep_fresh_output_and_journal_at_run_root(monkeypatch, tmp_
         m.setattr("src.pipeline.cli.ensure_run_task_for_reuse", lambda *args, **kwargs: True)
         m.setattr("src.pipeline.cli.reuse_run_task", lambda *args, **kwargs: None)
         _capture_commands(m)
-        rc = main([CIRCPACK, "execution.phases='posthoc,paper'", f"paths.run_dir={run_dir}", "container.enabled=false", "run_id=test-run"])
+        rc = main([CIRCPACK, "execution.phases='posthoc,paper'", f"paths.run_dir={run_dir}", "container.enabled=false", "container.paper_enabled=true", "run_id=test-run"])
     assert rc == 0
     assert (run_dir / "pipeline_events.jsonl").is_file()
 

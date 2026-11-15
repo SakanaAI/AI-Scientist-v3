@@ -146,6 +146,30 @@ class PipelineContainerConfig(ContainerConfig):
             )
         },
     )
+    paper_enabled: Optional[bool] = field(
+        default=None,
+        metadata={
+            "help": (
+                "Run the paper phase in Docker; null follows container.enabled. true keeps "
+                "a native campaign's paper in the image, which has pdflatex/bibtex and runs "
+                "the read-only evidence audit"
+            )
+        },
+    )
+
+
+def phase_uses_container(cfg: "PipelineConfig", phase: str) -> bool:
+    """Whether ``phase`` runs its agents in Docker; only the paper phase can differ from the run."""
+    if phase == "paper" and cfg.container.paper_enabled is not None:
+        return cfg.container.paper_enabled
+    return cfg.container.enabled
+
+
+PAPER_NEEDS_CONTAINER_ERROR = (
+    "the paper phase needs a container: its evidence audit refuses native agents and the "
+    "image provides pdflatex/bibtex; set container.paper_enabled=true to run only the paper "
+    "in Docker"
+)
 
 
 @dataclass
@@ -946,7 +970,7 @@ def validate_pipeline_config(cfg: PipelineConfig) -> list[str]:
     if cfg.agent.name == "gemini" and cfg.agent.reasoning_effort is not None:
         errors.append(GEMINI_REASONING_EFFORT_ERROR)
 
-    if cfg.container.enabled:
+    if cfg.container.enabled or ("paper" in selected and phase_uses_container(cfg, "paper")):
         auth_root_raw = str(cfg.container.auth_root)
         if not auth_root_raw.strip():
             errors.append("container.auth_root must be non-empty when container is enabled")
@@ -1305,6 +1329,8 @@ def validate_pipeline_config(cfg: PipelineConfig) -> list[str]:
             )
     if "revision" in selected and not cfg.container.enabled:
         errors.append("revision phase requires container.enabled=true")
+    if "paper" in selected and not phase_uses_container(cfg, "paper"):
+        errors.append(PAPER_NEEDS_CONTAINER_ERROR)
     errors.extend(_versioning_errors(cfg.versioning))
 
     return errors

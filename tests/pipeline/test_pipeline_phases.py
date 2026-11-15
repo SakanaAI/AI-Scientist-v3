@@ -456,6 +456,56 @@ def test_native_ablations_reject_cross_task_and_contract_tasks_before_any_phase(
     assert not any("cannot run a contract task" in error for error in validate_pipeline_config(cfg))
 
 
+def test_a_paper_phase_without_a_container_is_rejected_before_any_phase() -> None:
+    def paper_errors(*overrides: str) -> list[str]:
+        cfg = load_pipeline_config([CIRCPACK, 'execution.phases="investigation,paper"', *overrides])
+        return [error for error in validate_pipeline_config(cfg) if "paper phase needs a container" in error]
+
+    assert paper_errors("container.enabled=false")
+    assert paper_errors("container.paper_enabled=false")
+    assert not paper_errors()
+    assert not paper_errors("container.enabled=false", "container.paper_enabled=true")
+    cfg = load_pipeline_config([CIRCPACK, "container.enabled=false", "execution.phases=investigation"])
+    assert not [error for error in validate_pipeline_config(cfg) if "paper" in error]
+
+
+def test_paper_enabled_containerizes_only_the_paper_of_a_native_run(tmp_path) -> None:
+    cfg = load_pipeline_config([
+        CIRCPACK, "container.enabled=false", "container.paper_enabled=true",
+        "container.image=agent:latest", f"paths.run_dir={tmp_path / 'run'}",
+    ])
+    paths = derive_paths(cfg)
+    paper = build_paper_cmd(cfg, paths)
+    assert paper[paper.index("--container-image") + 1] == "agent:latest"
+    assert "--containerize" in paper
+    investigation = build_investigation_cmd(cfg, paths)
+    assert "container.enabled=false" in investigation
+    assert not any(arg.startswith("container.image=") for arg in investigation)
+
+    native = load_pipeline_config([CIRCPACK, "container.enabled=false", f"paths.run_dir={tmp_path / 'run'}"])
+    assert "--containerize" not in build_paper_cmd(native, derive_paths(native))
+
+
+def test_a_native_run_pins_the_agent_image_only_for_a_containerized_paper(monkeypatch) -> None:
+    leased: list[str] = []
+
+    class _Lease:
+        image_id = "sha256:agent"
+
+    def lease(ref: str, **_kwargs: object) -> _Lease:
+        leased.append(ref)
+        return _Lease()
+
+    monkeypatch.setattr("src.pipeline.cli.acquire_image_lease", lease)
+    native = ["container.enabled=false", "container.paper_enabled=true", "container.image=agent:latest"]
+    cfg = load_pipeline_config([CIRCPACK, *native])
+    _pin_evaluation_images(cfg, {"investigation", "ablations"}, derive_paths(cfg), [])
+    assert leased == [] and cfg.container.image == "agent:latest"
+    _pin_evaluation_images(cfg, {"investigation", "ablations", "paper"}, derive_paths(cfg), [])
+    assert leased == ["agent:latest"] and cfg.container.image == "sha256:agent"
+    assert cfg.ablations.sandbox_image is None  # native ablations still need no sandbox image
+
+
 # --------------------------------------------------------------------------- paper / posthoc commands
 
 

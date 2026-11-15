@@ -20,7 +20,13 @@ from typing import Callable, Mapping
 from src.orchestrator.paper_event_bridge import extract_transport_events
 from src.investigation.runtime import terminate_active_process_group
 
-from .config import PaperConfig, PhasePassthrough, PipelineConfig, venue_file_for_format
+from .config import (
+    PaperConfig,
+    PhasePassthrough,
+    PipelineConfig,
+    phase_uses_container,
+    venue_file_for_format,
+)
 from .paper_workspace import workspace_validation_errors
 from .paths import PipelinePaths
 
@@ -178,9 +184,16 @@ def _posthoc_container_overrides(cfg: PipelineConfig) -> list[str]:
 
 
 def _container_flags(cfg: PipelineConfig) -> list[str]:
-    """paper.sh CLI flags mirroring the container config."""
-    if not cfg.container.enabled:
-        return []
+    """paper.sh-style CLI flags mirroring the container config."""
+    return _docker_flags(cfg) if cfg.container.enabled else []
+
+
+def _paper_container_flags(cfg: PipelineConfig) -> list[str]:
+    """paper.sh container flags; ``container.paper_enabled`` can differ from the run."""
+    return _docker_flags(cfg) if phase_uses_container(cfg, "paper") else []
+
+
+def _docker_flags(cfg: PipelineConfig) -> list[str]:
     flags = [
         "--containerize",
         "--container-image",
@@ -538,7 +551,7 @@ def _build_paper_cmd(
     cmd += paper_flags_for(cfg.paper)
     cmd += ["--final-outcome-policy", cfg.paper.final_outcome_policy]
     cmd += _venue_flags(cfg)
-    cmd += _container_flags(cfg)
+    cmd += _paper_container_flags(cfg)
     cmd += _paper_logging_flags(cfg)
     return cmd
 

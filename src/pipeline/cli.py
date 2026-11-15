@@ -94,6 +94,7 @@ from .config import (
     describe_pipeline_config,
     flatten_mapping,
     parse_pipeline_phases,
+    phase_uses_container,
     register_pipeline_schema,
     validate_investigation_resume_state,
     validate_completed_investigation,
@@ -1201,8 +1202,8 @@ def _run_pipeline(
         )
         image_preflight_failed = False
         if (
-            cfg.container.enabled
-            and phase in container_phases
+            phase in container_phases
+            and phase_uses_container(cfg, phase)
             and not cfg.execution.dry_run
         ):
             try:
@@ -1983,7 +1984,7 @@ def _pin_evaluation_images(
     agent_image_ref = cfg.container.image
     agent_image_id: str | None = None
     lease_scope = str(paths.run_dir.resolve())
-    if cfg.container.enabled and selected.intersection(container_phases):
+    if any(phase_uses_container(cfg, phase) for phase in selected.intersection(container_phases)):
         agent_lease = acquire_image_lease(
             agent_image_ref,
             lease_scope=lease_scope,
