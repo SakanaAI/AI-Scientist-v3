@@ -30,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.investigation import evaluate_program as harness_eval  # noqa: E402
+from src.investigation import harness_sources  # noqa: E402
 from src.investigation.files import (  # noqa: E402
     load_task_copy_ignore_patterns,
     missing_task_scaffold_files,
@@ -143,6 +144,23 @@ def check_snapshot(task_dir: Path, report: Report) -> None:
         report.ok(message)
 
 
+def check_program_source_limits(task_dir: Path, report: Report) -> None:
+    """Harness-evaluated attempts inspect every candidate source; oversized sources fail every attempt."""
+    source_root = task_dir / "program_0" / "src"
+    files = [path for path in source_root.rglob("*") if path.is_file()] if source_root.is_dir() else []
+    largest = max(files, key=lambda path: path.stat().st_size, default=None)
+    total = sum(path.stat().st_size for path in files)
+    if largest is not None and largest.stat().st_size > harness_sources.MAX_SOURCE_FILE_BYTES:
+        report.fail(
+            f"program_0 source {largest.relative_to(task_dir)} is {largest.stat().st_size} bytes; harness "
+            f"inspection rejects files over {harness_sources.MAX_SOURCE_FILE_BYTES} bytes"
+        )
+    elif total > harness_sources.MAX_SOURCE_BYTES or len(files) > harness_sources.MAX_SOURCE_ENTRIES:
+        report.fail(f"program_0 sources ({len(files)} files, {total} bytes) exceed the harness inspection limits")
+    else:
+        report.ok(f"program_0 sources within harness inspection limits ({len(files)} files, {total} bytes)")
+
+
 def static_checks(task_dir: Path) -> Report:
     report = Report()
     print(f"static checks: {task_dir}")
@@ -152,6 +170,7 @@ def static_checks(task_dir: Path) -> Report:
     check_evaluator_source(task_dir, report)
     check_requirements(task_dir, report)
     check_snapshot(task_dir, report)
+    check_program_source_limits(task_dir, report)
     return report
 
 
