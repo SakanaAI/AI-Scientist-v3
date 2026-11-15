@@ -42,6 +42,8 @@ def generated_overrides(args: argparse.Namespace) -> list[str]:
     overrides = [phases_override(",".join(phases))]
     if args.mode == "native":
         overrides.append("container.enabled=false")
+        if "paper" in phases:  # the paper's evidence audit and LaTeX build run only in the image
+            overrides.append("container.paper_enabled=true")
     if args.gpus:
         if args.gpus % args.workers:
             raise SystemExit(f"--gpus {args.gpus} is not divisible by --workers {args.workers}")

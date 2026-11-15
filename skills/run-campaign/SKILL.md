@@ -63,7 +63,8 @@ cd $AGSCI
 ```
 
 Fix every failure before writing the launch script. Typical problems: GPUs not visible, Docker not
-reachable on GPU hosts, phases that native mode rejects, missing credentials in `.env`, low disk
+reachable on GPU hosts, phases that native mode rejects, a native paper phase without Docker
+(`write_launch.py` adds `container.paper_enabled=true`), missing credentials in `.env`, low disk
 space under the results root. `write_launch.py` prints these two commands with the exact
 overrides it generated; quote comma lists as `'execution.phases="a,b"'`, or `agsci doctor`
 rejects them.
