@@ -495,13 +495,21 @@ def _publish_result_bundle(
         raise
 
 
-def _evaluation_environment(runtime_dir: Path, runtime_fd: int) -> dict[str, str]:
-    environment = {
+def credential_free_environment() -> dict[str, str]:
+    """This process's environment without credential-like variables or Python path overrides."""
+    return {
         key: value
         for key, value in os.environ.items()
         if key not in _PYTHON_ENV_BLOCKLIST
         and not any(token in key.upper() for token in _SENSITIVE_ENV_TOKENS)
-        and (key in _SAFE_ENV_NAMES or key.startswith(_SAFE_ENV_PREFIXES))
+    }
+
+
+def _evaluation_environment(runtime_dir: Path, runtime_fd: int) -> dict[str, str]:
+    environment = {
+        key: value
+        for key, value in credential_free_environment().items()
+        if key in _SAFE_ENV_NAMES or key.startswith(_SAFE_ENV_PREFIXES)
     }
     home_dir = runtime_dir / "home"
     temp_dir = runtime_dir / "tmp"
@@ -604,7 +612,15 @@ def _terminate_descendants(*, excluded_pids: set[int]) -> None:
     raise RuntimeError("Could not prove evaluator descendant containment")
 
 
-def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+def _terminate_process_group(
+    process: subprocess.Popen[bytes], *, excluded_pids: set[int] | None = None
+) -> None:
+    """SIGINT the group, wait for it to empty, then SIGKILL it.
+
+    Group members orphaned by the leader are adopted by this subreaper and turn into zombies that
+    keep the group alive until reaped, so the wait also reaps adopted descendants (except
+    ``excluded_pids``, which other code may still wait on).
+    """
     try:
         os.killpg(process.pid, signal.SIGINT)
     except ProcessLookupError:
@@ -616,6 +632,8 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     deadline = time.monotonic() + _PROCESS_TERMINATION_GRACE_SECONDS
     while time.monotonic() < deadline:
         process.poll()
+        if excluded_pids is not None and sys.platform.startswith("linux"):
+            _reap_adopted_children(_descendant_pids(os.getpid()) - excluded_pids)
         try:
             os.killpg(process.pid, 0)
         except ProcessLookupError:
@@ -633,13 +651,23 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
-def _run_evaluator_locked(
+@dataclass(frozen=True)
+class ContainedRun:
+    """How a contained evaluator ended: its exit code, a timeout, or a forwarded stop signal."""
+
+    returncode: int | None = None
+    timed_out: bool = False
+    signum: int | None = None
+
+
+def _run_contained_locked(
     command: list[str],
     *,
     cwd: Path,
     environment: dict[str, str],
     timeout_seconds: float,
-) -> int:
+    stdout: Any = None,
+) -> ContainedRun:
     previous_subreaper = _enable_child_subreaper()
     existing_descendants = _descendant_pids(os.getpid())
     previous_handlers: dict[int, Any] = {}
@@ -656,6 +684,11 @@ def _run_evaluator_locked(
         if process is not None:
             raise _ForwardedSignal(signum)
 
+    def contain() -> None:
+        if process is not None:
+            _terminate_process_group(process, excluded_pids=existing_descendants)
+        _terminate_descendants(excluded_pids=existing_descendants)
+
     if can_install_handlers:
         for signum in handled_signals:
             previous_handlers[signum] = signal.getsignal(signum)
@@ -665,38 +698,53 @@ def _run_evaluator_locked(
             command,
             cwd=cwd,
             env=environment,
+            stdout=stdout,
+            stderr=subprocess.STDOUT if stdout is not None else None,
             start_new_session=True,
         )
         if forwarded_signum is not None:
             raise _ForwardedSignal(forwarded_signum)
         returncode = process.wait(timeout=timeout_seconds)
-        _terminate_process_group(process)
-        _terminate_descendants(excluded_pids=existing_descendants)
-        return returncode
+        contain()
+        return ContainedRun(returncode=returncode)
     except subprocess.TimeoutExpired:
-        if process is not None:
-            _terminate_process_group(process)
-        _terminate_descendants(excluded_pids=existing_descendants)
-        return 124
+        contain()
+        return ContainedRun(timed_out=True)
     except _ForwardedSignal as exc:
-        if process is not None:
-            _terminate_process_group(process)
-        _terminate_descendants(excluded_pids=existing_descendants)
-        return 128 + exc.signum
+        contain()
+        return ContainedRun(signum=exc.signum)
     except KeyboardInterrupt:
-        if process is not None:
-            _terminate_process_group(process)
-        _terminate_descendants(excluded_pids=existing_descendants)
-        return 130
+        contain()
+        return ContainedRun(signum=signal.SIGINT)
     except BaseException:
         if process is not None:
-            _terminate_process_group(process)
-            _terminate_descendants(excluded_pids=existing_descendants)
+            contain()
         raise
     finally:
         for restore_signum, previous_handler in previous_handlers.items():
             signal.signal(restore_signum, previous_handler)
         _restore_child_subreaper(previous_subreaper)
+
+
+def run_contained(
+    command: list[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+    timeout_seconds: float,
+    stdout: Any = None,
+) -> ContainedRun:
+    """Run an evaluator in its own session and leave no descendant behind.
+
+    The caller becomes a child subreaper, so descendants that start their own sessions (torchrun
+    workers do) are still found and stopped: SIGINT to the group, then every descendant, then
+    SIGKILL. SIGINT/SIGTERM received meanwhile end the run as ``signum`` instead of raising.
+    ``stdout`` (a binary file) receives stdout and stderr; ``None`` inherits them.
+    """
+    with _EVALUATION_PROCESS_LOCK:
+        return _run_contained_locked(
+            command, cwd=cwd, environment=environment, timeout_seconds=timeout_seconds, stdout=stdout
+        )
 
 
 def _run_evaluator(
@@ -706,13 +754,13 @@ def _run_evaluator(
     environment: dict[str, str],
     timeout_seconds: float,
 ) -> int:
-    with _EVALUATION_PROCESS_LOCK:
-        return _run_evaluator_locked(
-            command,
-            cwd=cwd,
-            environment=environment,
-            timeout_seconds=timeout_seconds,
-        )
+    run = run_contained(command, cwd=cwd, environment=environment, timeout_seconds=timeout_seconds)
+    if run.timed_out:
+        return 124
+    if run.signum is not None:
+        return 128 + run.signum
+    assert run.returncode is not None
+    return run.returncode
 
 
 def _verify_pinned_directory(path: Path, dir_fd: int) -> None:

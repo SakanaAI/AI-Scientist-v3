@@ -56,6 +56,17 @@ Every path runs:
 (the template runs N times and averages), or tell the user to set
 `ablations.execution.num_replications=1` for expensive tasks.
 
+Native harness-evaluated runs (`harness_evaluated_attempts=true`, `container.enabled=false`) first
+evaluate the frozen `program_0` on the host to earn the incumbent score (event
+`native_incumbent_evaluation_start/end`); budget one extra evaluation at campaign start. A baseline
+that fails or is incorrect stops the run with `missing_validated_harness_incumbent`.
+
+Ablations evaluate variants the same way: in the Docker sandbox in container mode (which sets
+only the `NUM_REPLICATIONS` variable and does not pass the flag), or natively with
+`container.enabled=false` (`src/variants_pipeline/native_eval.py`: the native investigation
+environment, a private `TMPDIR`, the flag when N > 1, the sandbox's output limits). Native
+ablations refuse contract tasks and cross-task variants.
+
 The surroundings depend on who evaluates:
 
 | | Agent-run (default for CPU tasks) | Harness-evaluated, container | Harness-evaluated, native |

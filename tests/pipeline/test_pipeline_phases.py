@@ -12,6 +12,7 @@ import dataclasses
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -436,6 +437,23 @@ def test_ablations_rejects_invalid_timeout() -> None:
             assert any(
                 f"ablations.execution.{field}" in error for error in validate_pipeline_config(cfg)
             ), (field, value)
+
+
+def test_native_ablations_reject_cross_task_and_contract_tasks_before_any_phase(tmp_path) -> None:
+    native = ["container.enabled=false", 'execution.phases="investigation,ablations"']
+    cfg = load_pipeline_config([CIRCPACK, *native])
+    assert not [error for error in validate_pipeline_config(cfg) if "native" in error or "extra_tasks" in error]
+
+    cfg = load_pipeline_config([CIRCPACK, *native, "ablations.paths.extra_tasks=[examples/grpo]"])
+    assert any("extra_tasks" in error for error in validate_pipeline_config(cfg))
+
+    contract_task = tmp_path / "contract_task"
+    shutil.copytree("examples/circpack", contract_task)
+    (contract_task / "task_contract.json").write_text("{}")
+    cfg = load_pipeline_config([f"task.dir={contract_task}", *native])
+    assert any("cannot run a contract task" in error for error in validate_pipeline_config(cfg))
+    cfg = load_pipeline_config([f"task.dir={contract_task}", 'execution.phases="investigation,ablations"'])
+    assert not any("cannot run a contract task" in error for error in validate_pipeline_config(cfg))
 
 
 # --------------------------------------------------------------------------- paper / posthoc commands
@@ -1274,11 +1292,13 @@ def test_pipeline_pins_evaluation_images_only_when_needed(
     monkeypatch.setattr("src.pipeline.cli.acquire_image_lease", unexpected_resolution)
     for name, enabled, selected in [
         ("containers_disabled", "false", {"investigation"}),
+        ("native_ablations", "false", {"investigation", "ablations"}),
         ("review_only", "true", {"review"}),
     ]:
         cfg = load_pipeline_config([CIRCPACK, f"container.enabled={enabled}", "container.image=agent:latest"])
         _pin_evaluation_images(cfg, selected, derive_paths(cfg), [])
         assert cfg.container.image == "agent:latest", name
+        assert cfg.ablations.sandbox_image is None, name
 
 
 def test_image_leases_are_verified_routed_and_released_despite_cleanup_failures(

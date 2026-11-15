@@ -26,7 +26,7 @@ All options are Hydra overrides to `agsci run <task_dir> ...`, run from the repo
 | - | - | - |
 | Needs | Docker on the host that runs the run; built image | agent CLI, Git, Node.js on the host |
 | Isolation | agents and evaluators sandboxed | agents run with the user's own permissions |
-| Phases | all | not `task_drafting`, `final_evaluation`, or `revision` |
+| Phases | all | not `task_drafting`, `final_evaluation`, or `revision`; ablations run natively (no contract tasks, no `ablations.paths.extra_tasks`) |
 | GPUs | `AGENT_CONTAINER_GPUS` or the first visible ones | the GPUs Slurm or `CUDA_VISIBLE_DEVICES` expose |
 | Toolchain | image has no C compiler or CUDA toolkit | host toolchain (Triton, `torch.compile` work) |
 

@@ -19,6 +19,7 @@ from .extract import extract_bundle
 from .generate import generate_variant_candidates
 from .materialize import materialize_variant_workspaces
 from .models import VariantRunResult, VariantSelection, VariantSpec
+from .native_eval import is_contract_task
 from .retrofit import retrofit_program
 from .select import validate_and_select_variants
 
@@ -55,9 +56,20 @@ def run_variants_pipeline(
     agent_stages = stages.intersection({1, 2, 3, 5, 8})
     if cross_task_requested:
         agent_stages.add(6)
-    if agent_stages and not cfg.container.enabled:
-        logger.error("Variants agent stages require container.enabled=true")
-        return 1
+    if not cfg.container.enabled:
+        if cross_task_requested:
+            logger.error("Cross-task variants require container.enabled=true")
+            return 1
+        if is_contract_task(Path(cfg.paths.task_dir).expanduser()):
+            logger.error(
+                "Contract tasks require container.enabled=true: native agents could read "
+                "the hidden final evaluator"
+            )
+            return 1
+        if agent_stages:
+            logger.info(
+                "Native variants: agents and evaluations run on the host (container.enabled=false)"
+            )
 
     task_dir = Path(cfg.paths.task_dir).expanduser().resolve()
     results_dir = Path(cfg.paths.results_dir).expanduser().resolve()
@@ -79,22 +91,25 @@ def run_variants_pipeline(
                 exc,
             )
             return 1
-        sandbox_image = resolve_sandbox_image(
-            cfg.execution.sandbox_image or cfg.container.image
-        )
-        logger.info("Evaluation sandbox pinned: %s", sandbox_image)
-        if not prepare_evaluation_runtime(
-            task_dir,
-            sandbox_image=sandbox_image,
-            container_network=cfg.container.network,
-            evaluator_tree_sha256=evaluator_source_digest,
-        ):
-            logger.error(
-                "Managed runtime preflight failed for primary task %s; "
-                "no variant stages were started",
-                task_dir,
+        if cfg.container.enabled:
+            sandbox_image = resolve_sandbox_image(
+                cfg.execution.sandbox_image or cfg.container.image
             )
-            return 1
+            logger.info("Evaluation sandbox pinned: %s", sandbox_image)
+            if not prepare_evaluation_runtime(
+                task_dir,
+                sandbox_image=sandbox_image,
+                container_network=cfg.container.network,
+                evaluator_tree_sha256=evaluator_source_digest,
+            ):
+                logger.error(
+                    "Managed runtime preflight failed for primary task %s; "
+                    "no variant stages were started",
+                    task_dir,
+                )
+                return 1
+        else:
+            logger.info("Native evaluation: no sandbox image or managed runtime to prepare")
 
     logger.info("Variants pipeline starting: output_dir=%s", output_dir)
 

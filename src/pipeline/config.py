@@ -1046,6 +1046,17 @@ def validate_pipeline_config(cfg: PipelineConfig) -> list[str]:
             )
 
     if "ablations" in selected:
+        if not cfg.container.enabled:
+            if cfg.ablations.extra_tasks:
+                errors.append(
+                    "ablations.paths.extra_tasks (cross-task variants) require container.enabled=true"
+                )
+            contract = task_dir / TASK_CONTRACT_FILENAME if task_dir is not None else None
+            if contract is not None and (contract.exists() or contract.is_symlink()):
+                errors.append(
+                    "native ablations (container.enabled=false) cannot run a contract task: "
+                    "its hidden final evaluator needs agent isolation"
+                )
         evaluation_timeout = cfg.ablations.evaluation_timeout_seconds
         if evaluation_timeout is not None and (
             type(evaluation_timeout) is not int or evaluation_timeout < 1

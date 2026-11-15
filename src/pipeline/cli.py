@@ -1993,8 +1993,8 @@ def _pin_evaluation_images(
         agent_image_id = agent_lease.image_id
         cfg.container.image = agent_image_id
 
-    if "ablations" not in selected:
-        return
+    if "ablations" not in selected or not cfg.container.enabled:
+        return  # native ablations evaluate on the host, without a sandbox image
     sandbox_ref = cfg.ablations.sandbox_image or agent_image_ref
     if agent_image_id is not None and sandbox_ref == agent_image_ref:
         sandbox_image_id = agent_image_id

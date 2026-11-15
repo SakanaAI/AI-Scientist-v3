@@ -9,7 +9,7 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from src.investigation.container_images import resolve_immutable_image
 from src.investigation.evaluator_tree import managed_evaluator_tree_digest
@@ -30,6 +30,7 @@ from .host_eval import (
     resolve_host_python,
 )
 from .models import VariantRunResult, VariantSpec
+from .native_eval import evaluate_variant_program_natively, native_evaluation_python
 from .qualification_summary import publish_summary_qualification
 from .reference_preflight import validate_reference_workspace
 from .rubric_contract import (
@@ -53,6 +54,7 @@ RegisterFn = Callable[[subprocess.Popen[str]], None]
 UnregisterFn = Callable[[subprocess.Popen[str]], None]
 TerminateFn = Callable[..., None]
 EnsureTextFn = Callable[[Optional[str | bytes]], str]
+_DIAGNOSTIC_LOG_CHARS = 4000
 ContainerEnvFn = Callable[..., dict[str, str]]
 EventFn = Callable[..., None]
 
@@ -70,6 +72,7 @@ def execute_variant_agents(
     *,
     variant_specs: list[VariantSpec],
     variants_run_dir: Path,
+    containerize: bool,
     agent: str,
     agent_model: str | None,
     agent_profile: str | None = None,
@@ -84,7 +87,6 @@ def execute_variant_agents(
     evaluator_source_dir: Path | None = None,
     evaluator_source_digest: str | None = None,
     venv_dir: Path | None = None,
-    containerize: bool = False,
     container_image: str = "",
     container_network: str = "bridge",
     container_auth_root: Path | None = None,
@@ -106,10 +108,8 @@ def execute_variant_agents(
     ):
         raise ValueError("evaluation_timeout_seconds must be a positive integer or None")
     results: list[VariantRunResult] = []
-    if variant_specs and (not containerize or evaluator_source_digest is None):
-        raise ValueError(
-            "variant execution requires container isolation and a sealed evaluator digest"
-        )
+    if variant_specs and evaluator_source_digest is None:
+        raise ValueError("variant execution requires a sealed evaluator digest")
     trusted_evaluator_source = (
         evaluator_source_dir or variants_run_dir / "_retrofitted_bundle"
     ).resolve()
@@ -117,7 +117,7 @@ def execute_variant_agents(
         if managed_evaluator_tree_digest(trusted_evaluator_source) != evaluator_source_digest:
             raise ValueError("sealed evaluator source tree changed before execution")
     resolved_sandbox_image = ""
-    if variant_specs:
+    if variant_specs and containerize:  # native runs (containerize=False) evaluate on the host
         resolved_sandbox_image = resolve_sandbox_image(
             sandbox_image or os.environ.get("VARIANT_EVAL_SANDBOX_IMAGE", "")
         )
@@ -295,7 +295,7 @@ def _run_single_variant(
     if num_replications > 1:
         env["NUM_REPLICATIONS"] = str(num_replications)
 
-    host_python = resolve_host_python(
+    host_python = (resolve_host_python if containerize else native_evaluation_python)(
         task_source_dir=task_source_dir,
         venv_dir=venv_dir,
     )
@@ -333,7 +333,7 @@ def _run_single_variant(
     evaluator_source_dir = evaluator_source_dir.resolve()
     if not (evaluator_source_dir / "evaluate.py").is_file():
         raise ValueError(f"sealed retrofitted evaluator is missing: {evaluator_source_dir}")
-    resolved_sandbox_image = sandbox_image or _required_sandbox_image()
+    resolved_sandbox_image = (sandbox_image or _required_sandbox_image()) if containerize else ""
     output_parts: list[str] = []
     exit_code = 1
     eval_count = 0
@@ -456,20 +456,28 @@ def _run_single_variant(
                 evaluator_source_dir,
                 evaluator_source_digest,
             )
-            evaluation = evaluate_variant_program(
+            if not containerize and task_source_dir is None:
+                raise ValueError("native variant evaluation needs the task source directory")
+            evaluation_kwargs: dict[str, Any] = dict(
                 task_bundle_dir=task_bundle_dir,
                 evaluator_source_dir=evaluator_source_dir,
                 task_source_dir=task_source_dir or task_bundle_dir,
                 program_index=program_index,
                 python_bin=host_python,
-                sandbox_image=resolved_sandbox_image,
                 timeout_seconds=(
                     timeout_seconds if evaluation_timeout_seconds is None
                     else evaluation_timeout_seconds
                 ),
                 environment=host_env,
-                sandbox_gpus=os.environ.get("VARIANT_EVAL_SANDBOX_GPUS"),
             )
+            if containerize:
+                evaluation = evaluate_variant_program(
+                    **evaluation_kwargs,
+                    sandbox_image=resolved_sandbox_image,
+                    sandbox_gpus=os.environ.get("VARIANT_EVAL_SANDBOX_GPUS"),
+                )
+            else:
+                evaluation = evaluate_variant_program_natively(**evaluation_kwargs)
             evaluation_completed = True
             _verify_evaluator_source(
                 evaluator_source_dir,
@@ -494,8 +502,14 @@ def _run_single_variant(
                         spec.variant_id,
                         cleanup_error,
                     )
-            output_parts.append(str(exc))
-            logger.error("Variant %s host evaluation failed: %s", spec.variant_id, exc)
+            diagnostic = str(getattr(exc, "diagnostic", "") or "")[-_DIAGNOSTIC_LOG_CHARS:]
+            output_parts.append(f"{exc}\n{diagnostic}" if diagnostic else str(exc))
+            logger.error(
+                "Variant %s host evaluation failed: %s%s",
+                spec.variant_id,
+                exc,
+                f"\n--- evaluator output (tail) ---\n{diagnostic}" if diagnostic else "",
+            )
             exit_code = 1
             break
 
