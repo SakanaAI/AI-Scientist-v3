@@ -493,7 +493,7 @@ def _run_direct_evaluation(
         "producer": "harness_eval",
         "attempt_id": attempt_id,
         "idea_id": idea_id,
-        "program_id": "program_1",
+        "program_id": program_dir.name,
         "command": command,
         "started_at": _utc_now(),
     }
@@ -525,6 +525,38 @@ def _run_direct_evaluation(
     manifest.update(finished_at=_utc_now(), exit_code=result.returncode)
     _write_json(manifest_path, manifest)
     return result.returncode
+
+
+def bootstrap_native_incumbent(
+    *,
+    program_dir: Path,
+    evaluate_py: Path,
+    python_bin: str,
+    timeout_seconds: int,
+    environment: Mapping[str, str],
+    gpu_evaluation: bool,
+) -> int:
+    """Evaluate a native run's frozen seed the way native attempts are evaluated.
+
+    Native runs have no managed runtime or sandbox to vouch for the baseline, so the harness
+    earns the incumbent score itself before the first cycle. Returns the evaluator's exit code;
+    a timeout raises ``SystemExit`` as for attempts.
+    """
+    program_dir = program_dir.resolve()
+    entrypoint_rel = entrypoint_relpath_from_spec(program_dir)
+    if entrypoint_rel is None:
+        raise SystemExit(f"Seed program has no valid program_spec.toml: {program_dir}")
+    return _run_direct_evaluation(
+        experiment_dir=program_dir.parent,
+        evaluate_py=evaluate_py.resolve(),
+        entrypoint=program_dir / entrypoint_rel,
+        program_dir=program_dir,
+        attempt_id="bootstrap",
+        idea_id="bootstrap",
+        python_bin=python_bin,
+        timeout_seconds=timeout_seconds,
+        environment=_evaluation_environment(environment, gpu_evaluation=gpu_evaluation),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

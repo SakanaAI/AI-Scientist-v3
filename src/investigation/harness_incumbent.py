@@ -124,6 +124,7 @@ def _sealed_program_evaluation(
     baseline_program_dir: Path,
     baseline_score: float | None,
     baseline_correct: bool | None,
+    trust_native: bool = False,
 ) -> _TrustedProgramEvaluation | None:
     program_dir = resolve_path(program_dir)
     if program_dir == resolve_path(baseline_program_dir):
@@ -132,10 +133,8 @@ def _sealed_program_evaluation(
             return _TrustedProgramEvaluation(validated_baseline, baseline_correct)
     manifest = _read_harness_json(program_dir / "evaluation_manifest.json")
     if not manifest or not (
-        manifest.get("producer") == "sandbox_host_eval"
-        and manifest.get("execution_boundary") == "sandbox"
+        (_is_sandbox_manifest(manifest) or (trust_native and _is_native_manifest(manifest)))
         and manifest.get("program_id") == program_dir.name
-        and manifest.get("returncode") == 0
         and manifest.get("exit_code") == 0
         and isinstance(manifest.get("command"), list)
         and bool(manifest["command"])
@@ -149,6 +148,19 @@ def _sealed_program_evaluation(
         return None
     score = _finite_score(metrics.get("combined_score"))
     return _TrustedProgramEvaluation(score, True) if score is not None else None
+
+
+def _is_sandbox_manifest(manifest: dict[str, Any]) -> bool:
+    return (
+        manifest.get("producer") == "sandbox_host_eval"
+        and manifest.get("execution_boundary") == "sandbox"
+        and manifest.get("returncode") == 0
+    )
+
+
+def _is_native_manifest(manifest: dict[str, Any]) -> bool:
+    """A native run's own harness evaluation (``harness_eval`` direct, no sandbox)."""
+    return manifest.get("producer") == "harness_eval"
 
 
 def _legacy_program_dir(best_manifest: dict[str, Any]) -> Path | None:
@@ -172,8 +184,13 @@ def reconcile_harness_incumbent(
     best_manifest: dict[str, Any],
     outer_state: dict[str, Any],
     validated_baseline_program_dir: Path | None = None,
+    trust_native: bool = False,
 ) -> bool:
-    """Pair the incumbent score with the program that earned it."""
+    """Pair the incumbent score with the program that earned it.
+
+    ``trust_native`` (native runs only, ``container.enabled=false``) also accepts evaluations the
+    harness ran directly on the host, since such runs have no runtime or sandbox to vouch for one.
+    """
     baseline_program_dir = resolve_path(
         validated_baseline_program_dir or task_dir / "program_0"
     )
@@ -184,6 +201,7 @@ def reconcile_harness_incumbent(
         baseline_program_dir=baseline_program_dir,
         baseline_score=baseline_score,
         baseline_correct=baseline_correct,
+        trust_native=trust_native,
     )
     persisted_program = _legacy_program_dir(best_manifest)
     persisted_program_is_managed = persisted_program is not None and (
@@ -195,6 +213,7 @@ def reconcile_harness_incumbent(
             baseline_program_dir=baseline_program_dir,
             baseline_score=baseline_score,
             baseline_correct=baseline_correct,
+            trust_native=trust_native,
         )
         if persisted_program_is_managed and persisted_program is not None
         else None

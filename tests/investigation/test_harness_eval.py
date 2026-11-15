@@ -14,7 +14,9 @@ import pytest
 from src.investigation import harness_sources
 from src.investigation.evaluator_tree import managed_evaluator_tree_digest
 from src.investigation.files import evaluation_results_complete
+from src.investigation.harness_incumbent import reconcile_harness_incumbent
 from src.investigation.harness_eval import (
+    bootstrap_native_incumbent,
     SealedHarnessConfig,
     _ensure_agent_only_created_program_1,
     _read_candidate_sources,
@@ -404,9 +406,14 @@ def _fill_nonpython_bytes(program: Path) -> None:
 
 
 def test_inspection_bounds_source_size_and_tree_shape(tmp_path: Path) -> None:
+    # a large real-world training script (~165 KB) is inspected
+    program_dir = tmp_path / "large" / "program_1"
+    make_program_dir(program_dir, content="x = 1\n" * 28_000)
+    assert len(_read_candidate_sources(program_dir)) == 1
+
     # an oversized candidate source file is rejected
     program_dir = tmp_path / "file" / "program_1"
-    make_program_dir(program_dir, content="x = 1\n" * 100_000)
+    make_program_dir(program_dir, content="x" * (harness_sources.MAX_SOURCE_FILE_BYTES + 1))
     with pytest.raises(SystemExit, match="source exceeds harness inspection limit"):
         _read_candidate_sources(program_dir)
 
@@ -804,3 +811,54 @@ def test_managed_digest_tracks_only_evaluator_sources_and_rejects_cache_symlinks
     (task / "__pycache__").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError, match="contains a symlink"):
         managed_evaluator_tree_digest(task)
+
+
+# --- native incumbent -----------------------------------------------------------------------------
+
+
+def _reconcile(root: Path, seed: Path, *, trust_native: bool) -> tuple[bool, dict[str, Any]]:
+    best_manifest: dict[str, Any] = {"program_dir": str(seed)}
+    ok = reconcile_harness_incumbent(
+        task_dir=root / "task", results_dir=root, seed_program_dir=seed, baseline_score=None,
+        baseline_correct=None, best_manifest=best_manifest, outer_state={},
+        trust_native=trust_native,
+    )
+    return ok, best_manifest
+
+
+def test_native_bootstrap_earns_an_incumbent_only_native_runs_trust(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    seed = root / ".baseline-seed-x" / "program_0"
+    make_program_dir(seed, content=DEFAULT_SOURCE)
+    _write_evaluator(root, score=2.5)
+
+    # without an evaluation nothing vouches for the seed
+    assert _reconcile(root, seed, trust_native=True)[0] is False
+
+    returncode = bootstrap_native_incumbent(
+        program_dir=seed, evaluate_py=root / "evaluate.py", python_bin=sys.executable,
+        timeout_seconds=30, environment={"CUDA_VISIBLE_DEVICES": "0"}, gpu_evaluation=False,
+    )
+    manifest = json.loads((seed / "evaluation_manifest.json").read_text())
+    assert returncode == 0
+    assert (manifest["producer"], manifest["program_id"], manifest["exit_code"]) == (
+        "harness_eval", "program_0", 0,
+    )
+
+    ok, best = _reconcile(root, seed, trust_native=True)
+    assert ok and best["combined_score"] == 2.5 and best["correct"] is True
+    assert best["program_dir"] == str(seed.resolve())
+    # a containerized run never trusts a host-run evaluation
+    assert _reconcile(root, seed, trust_native=False)[0] is False
+
+
+def test_native_bootstrap_of_an_incorrect_seed_earns_no_incumbent(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    seed = root / ".baseline-seed-x" / "program_0"
+    make_program_dir(seed, content=DEFAULT_SOURCE)
+    _write_evaluator(root, score=2.5, correct=False)
+    assert bootstrap_native_incumbent(
+        program_dir=seed, evaluate_py=root / "evaluate.py", python_bin=sys.executable,
+        timeout_seconds=30, environment={}, gpu_evaluation=False,
+    ) == 0
+    assert _reconcile(root, seed, trust_native=True)[0] is False
