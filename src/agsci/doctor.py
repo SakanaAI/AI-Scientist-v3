@@ -33,6 +33,7 @@ from src.investigation.container_gpus import (
     GpuSelectorError,
     bounded_docker_gpu_selector,
     gpu_pool_label,
+    selector_devices,
     validate_gpu_allocation,
 )
 from src.investigation.constants import (
@@ -153,6 +154,18 @@ def check_tool(host: Host, name: str, *, required: bool, hint: str = "") -> Chec
     if path is None:
         return CheckResult(name, FAIL if required else WARN, "not found on PATH", hint=hint)
     return CheckResult(name, OK, _version_detail(host, name, path))
+
+
+def docker_optional_for_native_run(result: CheckResult) -> CheckResult:
+    """A native run (container.enabled=false) never talks to Docker: its daemon check only warns."""
+    if result.name not in {"docker", "docker daemon"} or result.status != FAIL:
+        return result
+    return CheckResult(
+        result.name,
+        WARN,
+        f"{result.detail} (not needed: container.enabled=false)",
+        hint=result.hint,
+    )
 
 
 def check_docker_daemon(host: Host) -> CheckResult:
@@ -454,7 +467,15 @@ def check_required_gpus(host: Host, cfg: PipelineConfig) -> CheckResult:
             )
         return CheckResult("required gpus", OK, "none")
     if selector:
-        selected = selector.count(",") + 1
+        try:
+            selected = len(selector_devices(selector))
+        except GpuSelectorError as exc:
+            return CheckResult(
+                "required gpus",
+                FAIL,
+                f"AGENT_CONTAINER_GPUS is malformed: {exc}",
+                hint="use AGENT_CONTAINER_GPUS=device=<UUID,...>, or unset it to discover via nvidia-smi",
+            )
         if selected != required:
             return CheckResult(
                 "required gpus",
@@ -643,6 +664,8 @@ def main(argv: list[str] | None = None, *, host: Host | None = None) -> int:
         if isinstance(cfg, CheckResult):
             results.append(cfg)
         else:
+            if not cfg.container.enabled:
+                results = [docker_optional_for_native_run(result) for result in results]
             results.extend(run_checks_for(host, cfg))
     else:
         results.append(check_agent_image(host, DEFAULT_CONTAINER_IMAGE, required=False))
