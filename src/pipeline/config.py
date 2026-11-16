@@ -1068,6 +1068,17 @@ def validate_pipeline_config(cfg: PipelineConfig) -> list[str]:
             errors.append(
                 "investigation.execution.gpu_evaluation requires container.gpu_count >= 1"
             )
+        if (
+            investigation_counts_valid
+            and cfg.investigation.harness_evaluated_attempts is True
+            and not cfg.container.enabled
+            and cfg.investigation.workers > 1
+        ):
+            errors.append(
+                "native harness-evaluated investigation (container.enabled=false) supports "
+                "investigation.execution.workers=1: parallel workers would each re-evaluate the "
+                "baseline and share GPUs"
+            )
 
     if "ablations" in selected:
         if not cfg.container.enabled:

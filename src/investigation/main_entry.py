@@ -664,6 +664,22 @@ def run_main_flow(
         )
         return 2
 
+    if (
+        cfg.execution.harness_evaluated_attempts
+        and not cfg.container.enabled
+        and cfg.execution.workers > 1
+    ):
+        log_event_fn(
+            "config_error",
+            reason="native_parallel_harness_evaluation_unsupported",
+            hint=(
+                "native harness-evaluated runs support one worker: parallel workers would each "
+                "re-evaluate the baseline and share GPUs; set execution.workers=1 or enable "
+                "containers"
+            ),
+        )
+        return 2
+
     if cfg.execution.gpu_evaluation and not cfg.execution.harness_evaluated_attempts:
         log_event_fn(
             "config_error",

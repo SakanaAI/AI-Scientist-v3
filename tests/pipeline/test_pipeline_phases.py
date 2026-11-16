@@ -456,6 +456,18 @@ def test_native_ablations_reject_cross_task_and_contract_tasks_before_any_phase(
     assert not any("cannot run a contract task" in error for error in validate_pipeline_config(cfg))
 
 
+def test_native_harness_evaluation_rejects_parallel_workers_before_any_phase() -> None:
+    def worker_errors(*overrides: str) -> list[str]:
+        cfg = load_pipeline_config([
+            CIRCPACK, "execution.phases=investigation", "investigation.execution.workers=2", *overrides,
+        ])
+        return [error for error in validate_pipeline_config(cfg) if "supports investigation.execution.workers=1" in error]
+
+    assert worker_errors("container.enabled=false", "investigation.execution.harness_evaluated_attempts=true")
+    assert not worker_errors("investigation.execution.harness_evaluated_attempts=true")
+    assert not worker_errors("container.enabled=false", "investigation.execution.harness_evaluated_attempts=false")
+
+
 def test_a_paper_phase_without_a_container_is_rejected_before_any_phase() -> None:
     def paper_errors(*overrides: str) -> list[str]:
         cfg = load_pipeline_config([CIRCPACK, 'execution.phases="investigation,paper"', *overrides])
