@@ -299,6 +299,8 @@ def test_doctor_requires_docker_for_a_native_runs_paper_phase(tmp_path, capsys) 
     assert checks["paper container"]["status"] == "ok"
     assert checks["docker daemon"]["status"] == "fail"  # the paper container needs a working daemon
     assert rc == 1
+    assert checks["resolved run"]["detail"].startswith("agent=claude mode=native (paper in Docker)")
+    assert checks["env file"]["detail"] != "none configured"  # the paper container mounts .env
 
 
 def test_doctor_rejects_a_gpu_selector_the_run_would_reject(tmp_path) -> None:

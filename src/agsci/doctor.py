@@ -335,7 +335,7 @@ def _dotenv_names(path: Path) -> set[str]:
 
 
 def _env_file_path(host: Host, cfg: PipelineConfig) -> Path | None:
-    if not cfg.container.enabled:
+    if not uses_docker(cfg):  # a native run's containerized paper mounts it too
         return None
     raw = str(cfg.container.env_file or "").strip()
     if not raw:
@@ -346,6 +346,8 @@ def _env_file_path(host: Host, cfg: PipelineConfig) -> Path | None:
 
 def check_run_summary(cfg: PipelineConfig) -> CheckResult:
     mode = "container" if cfg.container.enabled else "native"
+    if not cfg.container.enabled and uses_docker(cfg):
+        mode = "native (paper in Docker)"
     detail = (
         f"agent={cfg.agent.name} mode={mode} phases={cfg.execution.phases} "
         f"gpu_count={cfg.container.gpu_count}"

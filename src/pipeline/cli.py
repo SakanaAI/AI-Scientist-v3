@@ -175,6 +175,7 @@ from .phases import (
     build_paper_cmd,
     build_paper_cmd_without_final,
     build_paper_cmd_with_posthoc,
+    paper_environment_overrides,
     build_posthoc_cmd,
     build_task_drafting_cmd,
     forward_paper_output,
@@ -1573,6 +1574,7 @@ def _run_pipeline(
             rc = run_cmd(
                 paper_cmd,
                 dry_run=cfg.execution.dry_run,
+                env_overrides=paper_environment_overrides(cfg),
                 output_line_fn=lambda line: forward_paper_output(line, event_fn=log_event),
             )
         elif phase == "review":

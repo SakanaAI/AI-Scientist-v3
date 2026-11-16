@@ -55,6 +55,7 @@ from src.pipeline.phases import (
     build_posthoc_cmd,
     build_task_drafting_cmd,
     forward_paper_output,
+    paper_environment_overrides,
     run_cmd,
 )
 from src.variants_pipeline.cli import load_variants_config
@@ -479,6 +480,12 @@ def test_a_paper_phase_without_a_container_is_rejected_before_any_phase() -> Non
     assert not paper_errors("container.enabled=false", "container.paper_enabled=true")
     cfg = load_pipeline_config([CIRCPACK, "container.enabled=false", "execution.phases=investigation"])
     assert not [error for error in validate_pipeline_config(cfg) if "paper" in error]
+
+
+def test_a_native_runs_paper_container_gets_no_gpus() -> None:
+    native = load_pipeline_config([CIRCPACK, "container.enabled=false", "container.paper_enabled=true"])
+    assert paper_environment_overrides(native) == {"AGENT_CONTAINER_GPUS": ""}
+    assert paper_environment_overrides(load_pipeline_config([CIRCPACK])) == {}
 
 
 def test_paper_enabled_containerizes_only_the_paper_of_a_native_run(tmp_path) -> None:

@@ -188,6 +188,12 @@ def _container_flags(cfg: PipelineConfig) -> list[str]:
     return _docker_flags(cfg) if cfg.container.enabled else []
 
 
+def paper_environment_overrides(cfg: PipelineConfig) -> dict[str, str]:
+    """A native run's containerized paper gets no GPUs: it needs none, and native hosts often
+    lack the NVIDIA container toolkit that ``docker run --gpus`` requires."""
+    return {} if cfg.container.enabled else {"AGENT_CONTAINER_GPUS": ""}
+
+
 def _paper_container_flags(cfg: PipelineConfig) -> list[str]:
     """paper.sh container flags; ``container.paper_enabled`` can differ from the run."""
     return _docker_flags(cfg) if phase_uses_container(cfg, "paper") else []
