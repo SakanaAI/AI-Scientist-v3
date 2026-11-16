@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from .program_spec import load_program_spec, resolve_entrypoint
@@ -495,7 +496,7 @@ def _publish_result_bundle(
         raise
 
 
-def credential_free_environment() -> dict[str, str]:
+def credential_free_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
     """This process's environment minus Python path overrides and variables whose names look like
     credentials (KEY, TOKEN, SECRET, ...).
 
@@ -504,7 +505,7 @@ def credential_free_environment() -> dict[str, str]:
     """
     return {
         key: value
-        for key, value in os.environ.items()
+        for key, value in (os.environ if environment is None else environment).items()
         if key not in _PYTHON_ENV_BLOCKLIST
         and not any(token in key.upper() for token in _SENSITIVE_ENV_TOKENS)
     }

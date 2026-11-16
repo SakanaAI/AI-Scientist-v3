@@ -84,20 +84,25 @@ def _bootstrap_native_incumbent(
 
     task_python = task_dir / ".venv" / "bin" / "python"
     python_bin = str(task_python) if os.access(task_python, os.X_OK) else sys.executable
-    log_event_fn("native_incumbent_evaluation_start", program_dir=str(seed_program_dir))
+    log_path = seed_program_dir / "harness_evaluate_stdout.log"
+    log_event_fn(
+        "native_incumbent_evaluation_start", program_dir=str(seed_program_dir), log=str(log_path)
+    )
     try:
         returncode = bootstrap_native_incumbent(
             program_dir=seed_program_dir,
-            evaluate_py=task_dir / "evaluate.py",
+            task_dir=task_dir,
             python_bin=python_bin,
             timeout_seconds=cfg.execution.harness_evaluation_timeout_seconds,
-            environment={**os.environ, "TASK_SOURCE_DIR": str(task_dir)},
+            environment=os.environ,
             gpu_evaluation=cfg.execution.gpu_evaluation,
         )
     except SystemExit as exc:
-        log_event_fn("native_incumbent_evaluation_end", returncode=None, error=str(exc))
+        log_event_fn(
+            "native_incumbent_evaluation_end", returncode=None, error=str(exc), log=str(log_path)
+        )
         return False
-    log_event_fn("native_incumbent_evaluation_end", returncode=returncode)
+    log_event_fn("native_incumbent_evaluation_end", returncode=returncode, log=str(log_path))
     return returncode == 0
 
 
@@ -1058,7 +1063,7 @@ def run_main_flow(
                     "harness artifacts"
                     if containerize
                     else "the native baseline evaluation of program_0 failed or was not "
-                    "correct; see its harness_evaluate_*.log files"
+                    f"correct; see {seed_program_dir / 'harness_evaluate_stdout.log'}"
                 ),
             )
             return 2

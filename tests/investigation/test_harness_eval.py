@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,7 @@ from src.investigation import harness_sources
 from src.investigation.evaluator_tree import managed_evaluator_tree_digest
 from src.investigation.files import evaluation_results_complete
 from src.investigation.harness_incumbent import reconcile_harness_incumbent
+from src.investigation.evaluate_program import ContainedRun
 from src.investigation.harness_eval import (
     bootstrap_native_incumbent,
     SealedHarnessConfig,
@@ -233,7 +233,7 @@ def test_harness_eval_sealed_execution_records_success_failure_and_timeout(tmp_p
         return sealed_result
 
     with (
-        patch("src.investigation.harness_eval.subprocess.run") as direct_run,
+        patch("src.investigation.harness_eval.run_contained") as direct_run,
         patch("src.variants_pipeline.host_eval.evaluate_variant_program", side_effect=run_sealed_evaluation) as sealed_run,
     ):
         exit_code = _evaluate(
@@ -294,18 +294,19 @@ def test_direct_harness_controls_cuda_visibility(tmp_path: Path) -> None:
         root = tmp_path / name
         experiment_dir = _experiment(root, source="print('ok')\n", score=0.9)
 
-        def evaluate(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == expected_cuda, name
+        def evaluate(command: list[str], **kwargs: Any) -> ContainedRun:
+            assert kwargs["environment"]["CUDA_VISIBLE_DEVICES"] == expected_cuda, name
+            assert "FAKE_API_KEY" not in kwargs["environment"], name
             program_dir = experiment_dir / "program_1"
             (program_dir / "metrics.json").write_text('{"combined_score": 0.9}')
             (program_dir / "correct.json").write_text('{"correct": true}')
-            return subprocess.CompletedProcess(command, 0, "", "")
+            return ContainedRun(returncode=0)
 
-        with patch("src.investigation.harness_eval.subprocess.run", side_effect=evaluate):
+        with patch("src.investigation.harness_eval.run_contained", side_effect=evaluate):
             exit_code = _evaluate(
                 experiment_dir,
                 _write_rubrics(root, []),
-                environment={"CUDA_VISIBLE_DEVICES": "0,1"},
+                environment={"CUDA_VISIBLE_DEVICES": "0,1", "FAKE_API_KEY": "secret"},
                 gpu_evaluation=gpu_evaluation,
             )
         assert exit_code == 0, name
@@ -836,7 +837,7 @@ def test_native_bootstrap_earns_an_incumbent_only_native_runs_trust(tmp_path: Pa
     assert _reconcile(root, seed, trust_native=True)[0] is False
 
     returncode = bootstrap_native_incumbent(
-        program_dir=seed, evaluate_py=root / "evaluate.py", python_bin=sys.executable,
+        program_dir=seed, task_dir=root, python_bin=sys.executable,
         timeout_seconds=30, environment={"CUDA_VISIBLE_DEVICES": "0"}, gpu_evaluation=False,
     )
     manifest = json.loads((seed / "evaluation_manifest.json").read_text())
@@ -858,7 +859,56 @@ def test_native_bootstrap_of_an_incorrect_seed_earns_no_incumbent(tmp_path: Path
     make_program_dir(seed, content=DEFAULT_SOURCE)
     _write_evaluator(root, score=2.5, correct=False)
     assert bootstrap_native_incumbent(
-        program_dir=seed, evaluate_py=root / "evaluate.py", python_bin=sys.executable,
+        program_dir=seed, task_dir=root, python_bin=sys.executable,
         timeout_seconds=30, environment={}, gpu_evaluation=False,
     ) == 0
     assert _reconcile(root, seed, trust_native=True)[0] is False
+
+
+def test_native_bootstrap_runs_like_an_attempt_and_logs_to_disk(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    seed = root / ".baseline-seed-x" / "program_0"
+    make_program_dir(seed, content=DEFAULT_SOURCE)
+    (root / "evaluate.py").write_text(
+        "import argparse, json, os, pathlib\n"
+        "p = argparse.ArgumentParser(); p.add_argument('--program_path'); p.add_argument('--results_dir')\n"
+        "a = p.parse_args(); out = pathlib.Path(a.results_dir)\n"
+        "print('cwd', os.getcwd(), 'task', os.environ.get('TASK_SOURCE_DIR'), 'key', os.environ.get('FAKE_API_KEY'))\n"
+        "(out / 'metrics.json').write_text(json.dumps({'combined_score': 1.0}))\n"
+        "(out / 'correct.json').write_text(json.dumps({'correct': True}))\n"
+    )
+
+    assert bootstrap_native_incumbent(
+        program_dir=seed, task_dir=root, python_bin=sys.executable, timeout_seconds=30,
+        environment={"FAKE_API_KEY": "secret", "PATH": os.environ["PATH"]}, gpu_evaluation=False,
+    ) == 0
+
+    log = (seed / "harness_evaluate_stdout.log").read_text()
+    assert f"cwd {seed.parent}" in log and f"task {root.resolve()}" in log and "key None" in log
+    assert (seed.parent / "evaluate.py").read_bytes() == (root / "evaluate.py").read_bytes()
+
+
+def test_native_bootstrap_timeout_stops_detached_descendants(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    seed = root / ".baseline-seed-x" / "program_0"
+    make_program_dir(seed, content=DEFAULT_SOURCE)
+    pid_file = tmp_path / "worker.pid"
+    (root / "evaluate.py").write_text(
+        "import subprocess, sys, time\n"
+        "worker = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'], start_new_session=True)\n"
+        f"open({str(pid_file)!r}, 'w').write(str(worker.pid))\n"
+        "print('training', flush=True)\n"
+        "time.sleep(300)\n"
+    )
+
+    with pytest.raises(SystemExit, match="timed out after 3s"):
+        bootstrap_native_incumbent(
+            program_dir=seed, task_dir=root, python_bin=sys.executable, timeout_seconds=3,
+            environment={"PATH": os.environ["PATH"]}, gpu_evaluation=False,
+        )
+
+    worker = int(pid_file.read_text())
+    assert not Path(f"/proc/{worker}").exists() or Path(f"/proc/{worker}/stat").read_text().split()[2] == "Z"
+    assert "training" in (seed / "harness_evaluate_stdout.log").read_text()
+    manifest = json.loads((seed / "evaluation_manifest.json").read_text())
+    assert manifest["exit_code"] == 124
