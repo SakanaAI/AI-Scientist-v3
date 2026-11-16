@@ -496,7 +496,12 @@ def _publish_result_bundle(
 
 
 def credential_free_environment() -> dict[str, str]:
-    """This process's environment without credential-like variables or Python path overrides."""
+    """This process's environment minus Python path overrides and variables whose names look like
+    credentials (KEY, TOKEN, SECRET, ...).
+
+    A name filter, not a secrecy boundary: it keeps HOME (and the credential files under it) and
+    any secret whose name does not match.
+    """
     return {
         key: value
         for key, value in os.environ.items()

@@ -2,17 +2,18 @@
 
 The Docker sandbox in ``host_eval`` cannot run tasks that need a compiler, JIT kernels, or data
 outside the task (the same tasks that force a native campaign). This path runs the sealed
-evaluator on the host in the environment native investigation gives it (the parent environment
-without credential-like variables or Python path overrides, the real HOME), with a private
-TMPDIR, and keeps the sandbox's output contract: the evaluator writes into a private scratch
+evaluator on the host in the native evaluation environment (``credential_free_environment``:
+the parent environment minus obvious credential variables and Python path overrides, the real
+HOME), with a private TMPDIR, and keeps the sandbox's output contract: the evaluator writes into a private scratch
 directory, the host canonicalizes the results, copies only the promotion allowlist into
 ``.harness_results``, validates it, and promotes it into the candidate directory.
 
 Containment is shared with native investigation (``run_contained``): the harness becomes a child
 subreaper, so descendants that start their own sessions (torchrun workers do) are stopped on
-exit, timeout, and SIGINT/SIGTERM. Agents and evaluators share the user's permissions in native
-mode; the sealed evaluator digest, checked by the caller before and after every evaluation, is
-what detects tampering. Contract tasks never run here.
+exit, timeout, and SIGINT/SIGTERM. Native mode is not a security boundary: agents, evaluators
+and candidate code share the user's permissions and files (including credentials under HOME),
+and the sealed evaluator digest checked before and after every evaluation detects only
+modifications left in place. Contract tasks never run here.
 """
 
 from __future__ import annotations
@@ -99,7 +100,7 @@ def evaluate_variant_program_natively(
         return _evaluate_in(
             scratch,
             program_dir=program_dir,
-            command=_command(python_bin, evaluate_py, program_dir / entrypoint_rel, scratch, environment),
+            command=_command(python_bin, evaluate_py, program_dir / entrypoint_rel, scratch),
             environment=_evaluator_environment(scratch, environment, task_source_dir, python_bin),
             timeout_seconds=timeout_seconds,
         )
@@ -107,10 +108,9 @@ def evaluate_variant_program_natively(
         shutil.rmtree(scratch, ignore_errors=True)  # never masks the result or a stop signal
 
 
-def _command(
-    python_bin: Path, evaluate_py: Path, entrypoint: Path, scratch: Path, environment: Mapping[str, str]
-) -> list[str]:
-    command = [
+def _command(python_bin: Path, evaluate_py: Path, entrypoint: Path, scratch: Path) -> list[str]:
+    """The sandbox's command line: replications arrive only as ``NUM_REPLICATIONS``, never a flag."""
+    return [
         str(python_bin),
         str(evaluate_py),
         "--program_path",
@@ -118,10 +118,6 @@ def _command(
         "--results_dir",
         str(scratch / "results"),
     ]
-    replications = environment.get("NUM_REPLICATIONS", "1")
-    if replications.isdigit() and int(replications) > 1:
-        command += ["--num_replications", replications]
-    return command
 
 
 def _evaluate_in(
@@ -144,11 +140,12 @@ def _evaluate_in(
     }
     _write_json(manifest_path, manifest)
     try:
-        with open(log_path, "wb") as log:
+        with open(log_path, "w+b") as log:
             run = run_contained(
                 command, cwd=scratch, environment=environment, timeout_seconds=timeout_seconds, stdout=log
             )
-        diagnostic = _tail(log_path, DIAGNOSTIC_TAIL_BYTES)
+            diagnostic = _tail(log, DIAGNOSTIC_TAIL_BYTES)
+            log_tail = _tail(log, LOG_TAIL_BYTES)
         if run.signum is not None:
             raise SystemExit(128 + run.signum)
         if run.timed_out:
@@ -156,7 +153,7 @@ def _evaluate_in(
         assert run.returncode is not None
         if run.returncode != 0:
             raise SandboxEvaluationError(run.returncode, command, diagnostic)
-        _promote(results, program_dir, environment, log_path)
+        _promote(results, program_dir, environment, log_tail)
         metrics = _load_mapping(program_dir / "metrics.json")
         correct_payload = _load_mapping(program_dir / "correct.json")
         if not metrics or not correct_payload:
@@ -194,7 +191,7 @@ def _evaluator_environment(
     return env
 
 
-def _promote(results: Path, program_dir: Path, environment: Mapping[str, str], log_path: Path) -> None:
+def _promote(results: Path, program_dir: Path, environment: Mapping[str, str], log_tail: str) -> None:
     """The sandbox's promotion contract: canonicalize, copy the allowlist, validate, promote.
 
     The harness's own log tail is written only into the fresh, harness-owned staging directory,
@@ -208,15 +205,20 @@ def _promote(results: Path, program_dir: Path, environment: Mapping[str, str], l
     staged_log.unlink(missing_ok=True)
     descriptor = os.open(staged_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "wb") as sink:
-        sink.write(_tail(log_path, LOG_TAIL_BYTES).encode("utf-8"))
+        sink.write(log_tail.encode("utf-8"))
     _validate_staged_results(staged, program_dir, environment)
     _promote_results(staged, program_dir)
 
 
-def _tail(path: Path, limit: int) -> str:
+def _tail(log: Any, limit: int) -> str:
+    """The last ``limit`` bytes of the harness's own log descriptor.
+
+    Read through the descriptor opened before the run, never by path: candidate code knows the
+    scratch directory and could replace the path with a FIFO or a link to an endless device.
+    """
     try:
-        with open(path, "rb") as source:
-            source.seek(max(0, path.stat().st_size - limit))
-            return source.read().decode("utf-8", errors="replace")
+        size = os.fstat(log.fileno()).st_size
+        log.seek(max(0, size - limit))
+        return log.read(limit).decode("utf-8", errors="replace")
     except OSError:
         return ""

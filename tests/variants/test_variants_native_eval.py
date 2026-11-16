@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from src.investigation.files import evaluation_results_complete
+from src.investigation.program_clone import clone_program_dir
 from src.investigation.task_contract import TASK_CONTRACT_FILENAME
 from src.variants_pipeline.host_eval import SandboxEvaluationError, SandboxEvaluationTimeout
 from src.variants_pipeline.native_eval import (
@@ -52,8 +54,7 @@ def _bundle(tmp_path: Path, evaluator_body: str) -> tuple[Path, Path, Path]:
         parser = argparse.ArgumentParser()
         parser.add_argument("--program_path", required=True)
         parser.add_argument("--results_dir", required=True)
-        parser.add_argument("--num_replications", type=int, default=1)
-        args = parser.parse_args()
+        args = parser.parse_args()  # strict, like the shipped examples: no --num_replications
         results = Path(args.results_dir)
         """
     )
@@ -75,7 +76,7 @@ def _evaluate(bundle: Path, evaluator: Path, task: Path, *, timeout: int = 60, e
 
 WRITE_RESULTS = """\
 (results / "metrics.json").write_text(json.dumps({
-    "combined_score": 0.5, "replications": args.num_replications,
+    "combined_score": 0.5, "replications": int(os.environ.get("NUM_REPLICATIONS", "1")),
     "home": os.environ.get("HOME", ""),
     "tmpdir": os.environ.get("TMPDIR", ""),
     "hf_home": os.environ.get("HF_HOME", ""),
@@ -103,7 +104,8 @@ def test_native_evaluation_promotes_only_the_allowlist_and_records_a_manifest(
     program = bundle / "program_1"
     assert result.returncode == 0 and result.correct
     assert result.metrics["combined_score"] == 0.5
-    assert result.metrics["replications"] == 3  # --num_replications forwarded when > 1
+    assert result.metrics["replications"] == 3  # NUM_REPLICATIONS only, as in the sandbox
+    assert "--num_replications" not in result.command
     assert result.metrics["variant"] == "ablation_x"
     assert result.metrics["home"] == os.environ["HOME"] and result.metrics["hf_home"] == "/data/hf"
     assert result.metrics["leaked_key"] == ""
@@ -118,6 +120,37 @@ def test_native_evaluation_promotes_only_the_allowlist_and_records_a_manifest(
     manifest = json.loads((program / "evaluation_manifest.json").read_text())
     assert manifest["producer"] == "native_host_eval" and manifest["returncode"] == 0
     assert manifest["execution_boundary"] == "native"
+
+
+def test_native_results_count_as_complete_and_can_be_cloned(tmp_path):
+    bundle, evaluator, task = _bundle(tmp_path, WRITE_RESULTS)
+    _evaluate(bundle, evaluator, task)
+    program = bundle / "program_1"
+    (program / "rubric_status.json").write_text(
+        json.dumps({"attempt_id": "ablation_x_1", "idea_id": "ablation_x", "overall_pass": True, "rubrics": []})
+    )
+
+    assert evaluation_results_complete(program)
+    clone_program_dir(src_dir=program, dst_dir=bundle / "program_2")
+    assert (bundle / "program_2" / "src" / "program.py").is_file()
+
+
+def test_evaluator_cannot_hang_the_harness_by_replacing_its_log(tmp_path):
+    bundle, evaluator, task = _bundle(
+        tmp_path,
+        """\
+        log = Path(os.environ["TMPDIR"]).parent / "evaluator.log"
+        log.unlink()
+        os.mkfifo(log)  # opening this by path would block forever
+        (results / "metrics.json").write_text(json.dumps({"combined_score": 1.0}))
+        (results / "correct.json").write_text(json.dumps({"correct": True}))
+        print("still logged", flush=True)
+        """,
+    )
+
+    result = _evaluate(bundle, evaluator, task, timeout=30)
+
+    assert result.correct and "still logged" in result.diagnostic
 
 
 def test_native_evaluation_failure_discards_artifacts_and_reports_the_output(tmp_path):
