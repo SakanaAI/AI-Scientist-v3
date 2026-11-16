@@ -549,6 +549,9 @@ def _run_direct_evaluation(
     return run.returncode
 
 
+_NATIVE_EVALUATOR_FILES = ("capture.py", "evaluate.py")
+
+
 def bootstrap_native_incumbent(
     *,
     program_dir: Path,
@@ -562,8 +565,9 @@ def bootstrap_native_incumbent(
 
     Native runs have no managed runtime or sandbox to vouch for the baseline, so the harness
     earns the incumbent score itself before the first cycle. Like an attempt (``run.sh``), the
-    evaluator is a copy of the task's ``evaluate.py`` next to the program, runs from that
-    directory with ``TASK_SOURCE_DIR`` set to the task, and is contained and logged the same way.
+    evaluator is a copy of the task's ``evaluate.py`` and ``capture.py`` next to the program,
+    runs from that directory with ``TASK_SOURCE_DIR`` set to the task, and is contained and
+    logged the same way.
     Returns the evaluator's exit code; a timeout or stop signal raises ``SystemExit``.
     """
     program_dir = program_dir.resolve()
@@ -573,7 +577,9 @@ def bootstrap_native_incumbent(
         raise SystemExit(f"Seed program has no valid program_spec.toml: {program_dir}")
     experiment_dir = program_dir.parent
     evaluate_py = experiment_dir / "evaluate.py"
-    shutil.copyfile(task_dir / "evaluate.py", evaluate_py)
+    for staged in _NATIVE_EVALUATOR_FILES:  # what run.sh stages into an attempt's experiment dir
+        if (task_dir / staged).is_file():
+            shutil.copyfile(task_dir / staged, experiment_dir / staged)
     return _run_direct_evaluation(
         experiment_dir=experiment_dir,
         evaluate_py=evaluate_py,

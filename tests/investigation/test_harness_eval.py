@@ -869,8 +869,10 @@ def test_native_bootstrap_runs_like_an_attempt_and_logs_to_disk(tmp_path: Path) 
     root = tmp_path / "run"
     seed = root / ".baseline-seed-x" / "program_0"
     make_program_dir(seed, content=DEFAULT_SOURCE)
+    (root / "capture.py").write_text("OutputCapture = object\n")
     (root / "evaluate.py").write_text(
         "import argparse, json, os, pathlib\n"
+        "from capture import OutputCapture  # shipped evaluators import their sibling capture.py\n"
         "p = argparse.ArgumentParser(); p.add_argument('--program_path'); p.add_argument('--results_dir')\n"
         "a = p.parse_args(); out = pathlib.Path(a.results_dir)\n"
         "print('cwd', os.getcwd(), 'task', os.environ.get('TASK_SOURCE_DIR'), 'key', os.environ.get('FAKE_API_KEY'))\n"
