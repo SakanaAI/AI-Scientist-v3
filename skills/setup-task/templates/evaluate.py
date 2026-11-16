@@ -261,7 +261,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--program_path", type=Path, required=True)
     parser.add_argument("--results_dir", type=Path, required=True)
-    parser.add_argument("--num_replications", type=int, default=1)  # the harness passes it when > 1
+    # Agent-run evaluations pass the flag; harness ablations (sandbox and native) set NUM_REPLICATIONS.
+    parser.add_argument("--num_replications", type=int, default=int(os.environ.get("NUM_REPLICATIONS", "1")))
     parser.add_argument("--profile", choices=("smoke", "search", "full"), default="search")
     args = parser.parse_args()
     if args.num_replications < 1:

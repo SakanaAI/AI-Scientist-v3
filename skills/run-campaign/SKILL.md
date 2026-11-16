@@ -28,7 +28,7 @@ Ask in one batch, offering the defaults below. Never assume consent for the item
 | - | - | - |
 | Agent (!) | agent CLI and model; this decides billing | `claude`, harness default model |
 | Environment (!) | container (default) or native mode. Native runs agents with the user's own permissions | container if the GPU hosts can run Docker and the task needs no compiler; otherwise native, after asking |
-| Compute | where it runs (local, tmux, Slurm partition), GPUs per worker, workers, node caps | 1 worker; GPUs from the task README |
+| Compute | where it runs (local, tmux, Slurm partition), GPUs per worker, workers, node caps | 1 worker (the only option for native GPU runs); GPUs from the task README |
 | Budget | idea cycles, attempt and evaluation timeouts, evaluations per attempt, ablation replications, rough cost ceiling | `preset=paper` budgets (20 cycles); plain `agsci run` uses only 3. Ablations replicate 5x by default, so ask for expensive tasks |
 | Phases | investigation only, or also ablations, post-hoc analysis and paper | `investigation,ablations,posthoc,paper` (`write_launch.py` always sets phases explicitly, because `preset=paper` would add `review` and `revision`) |
 | Paper | venue/format, custom paper instructions (`paper.instruct`), stated contributions (`paper.contributions_file`), custom investigation prompt (`investigation.paths.instruct`) | harness defaults |

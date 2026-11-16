@@ -145,20 +145,15 @@ def check_snapshot(task_dir: Path, report: Report) -> None:
 
 
 def check_program_source_limits(task_dir: Path, report: Report) -> None:
-    """Harness-evaluated attempts inspect every candidate source; oversized sources fail every attempt."""
-    source_root = task_dir / "program_0" / "src"
-    files = [path for path in source_root.rglob("*") if path.is_file()] if source_root.is_dir() else []
-    largest = max(files, key=lambda path: path.stat().st_size, default=None)
-    total = sum(path.stat().st_size for path in files)
-    if largest is not None and largest.stat().st_size > harness_sources.MAX_SOURCE_FILE_BYTES:
-        report.fail(
-            f"program_0 source {largest.relative_to(task_dir)} is {largest.stat().st_size} bytes; harness "
-            f"inspection rejects files over {harness_sources.MAX_SOURCE_FILE_BYTES} bytes"
-        )
-    elif total > harness_sources.MAX_SOURCE_BYTES or len(files) > harness_sources.MAX_SOURCE_ENTRIES:
-        report.fail(f"program_0 sources ({len(files)} files, {total} bytes) exceed the harness inspection limits")
+    """Harness-evaluated attempts inspect every candidate source with these exact rules (size,
+    entry count, depth, no symlinks); a program_0 that breaks them fails every such attempt."""
+    try:
+        harness_sources.read_candidate_sources(task_dir / "program_0")
+    except SystemExit as exc:
+        message = str(exc).replace("program_1", "program_0")
+        report.warn(f"{message}: every harness-evaluated attempt (GPU tasks) would fail")
     else:
-        report.ok(f"program_0 sources within harness inspection limits ({len(files)} files, {total} bytes)")
+        report.ok("program_0 sources pass harness inspection")
 
 
 def static_checks(task_dir: Path) -> Report:

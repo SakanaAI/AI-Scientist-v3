@@ -118,7 +118,8 @@ Start from the template's `TODO` markers. Hard requirements, from the harness co
   allowlisted variables. Custom variables do not arrive, so put settings in constants or flags.
 - Keep output small: echo only progress and error lines, keep the full program log in scratch, and
   copy a bounded tail into `--results_dir` as `stdout.log` (never copied into later programs).
-- Honor `--num_replications N` (ablations pass 5 by default), or tell the user to set
+- Honor replications: `--num_replications N` (agent-run) or `NUM_REPLICATIONS` (ablations, 5 by
+  default), or tell the user to set
   `ablations.execution.num_replications=1`.
 - Score with evaluator-owned code on evaluator-owned data. Never trust a number the candidate
   prints or writes. Check the hashes of external data.

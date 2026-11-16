@@ -51,20 +51,24 @@ Every path runs:
 <python> evaluate.py --program_path <program_k>/src/<entrypoint> --results_dir <dir> [--num_replications N]
 ```
 
-`--num_replications N` arrives when N > 1. Ablations pass it by default
-(`ablations.execution.num_replications`, 5 in `configs/pipeline_config.yaml`). Either honor it
-(the template runs N times and averages), or tell the user to set
+Agent-run evaluations pass `--num_replications N` when N > 1. Harness ablations (sandbox and
+native) never pass the flag; they set `NUM_REPLICATIONS=N` (`ablations.execution.num_replications`,
+5 by default in `configs/pipeline_config.yaml`). Read both (the template does: the flag defaults
+to the variable) and run N times, or tell the user to set
 `ablations.execution.num_replications=1` for expensive tasks.
 
 Native harness-evaluated runs (`harness_evaluated_attempts=true`, `container.enabled=false`) first
 evaluate the frozen `program_0` on the host to earn the incumbent score (event
-`native_incumbent_evaluation_start/end`); budget one extra evaluation at campaign start. A baseline
-that fails or is incorrect stops the run with `missing_validated_harness_incumbent`.
+`native_incumbent_evaluation_start/end`, log in the seed's `harness_evaluate_stdout.log`); budget
+one extra evaluation at campaign start. The seed runs exactly like an attempt: a copy of
+`evaluate.py` next to the program, that directory as cwd, `TASK_SOURCE_DIR` set to the task. A
+baseline that fails or is incorrect stops the run with `missing_validated_harness_incumbent`, so
+`program_0` must be `correct: true`. Native harness evaluation supports one investigation worker.
 
 Ablations evaluate variants the same way: in the Docker sandbox in container mode (which sets
 only the `NUM_REPLICATIONS` variable and does not pass the flag), or natively with
-`container.enabled=false` (`src/variants_pipeline/native_eval.py`: the native investigation
-environment, a private `TMPDIR`, the flag when N > 1, the sandbox's output limits). Native
+`container.enabled=false` (`src/variants_pipeline/native_eval.py`: the native evaluation
+environment, a private `TMPDIR`, `NUM_REPLICATIONS`, the sandbox's output limits). Native
 ablations refuse contract tasks and cross-task variants.
 
 The surroundings depend on who evaluates:
@@ -73,9 +77,9 @@ The surroundings depend on who evaluates:
 | - | - | - | - |
 | Enabled by | `harness_evaluated_attempts=false` | `harness_evaluated_attempts=true`, `container.enabled=true` | `harness_evaluated_attempts=true`, `container.enabled=false` |
 | Runner | `src/investigation/evaluate_program.py` | `src/variants_pipeline/host_eval.py` sandbox | `src/investigation/harness_eval.py` direct |
-| `--results_dir` | a separate output dir; summaries published into `program_k/` | `/results` tmpfs (144 MiB; total output ≤ 64 MiB, ≤ 20,000 entries) | `program_k/` itself |
+| `--results_dir` | a separate output dir; summaries published into `program_k/` | `/results` tmpfs (144 MiB; total output ≤ 64 MiB, ≤ 20,000 entries) | `program_k/` itself; output streams to `harness_evaluate_stdout.log` |
 | cwd | the task dir | inside the sandbox | the experiment dir |
-| Environment | filtered allowlist (below), fresh `HOME`/`TMPDIR` | fixed minimal set (`PATH`, `VENV_DIR`, `NUM_REPLICATIONS`, `CUDA_VISIBLE_DEVICES`, ...); no `DATA_DIR`, no `TMPDIR` | the full parent environment |
+| Environment | filtered allowlist (below), fresh `HOME`/`TMPDIR` | fixed minimal set (`PATH`, `VENV_DIR`, `NUM_REPLICATIONS`, `CUDA_VISIBLE_DEVICES`, ...); no `DATA_DIR`, no `TMPDIR` | the parent environment minus Python path overrides and credential-like names (`KEY`, `TOKEN`, `SECRET`, `AUTH`, `PROXY`, ...); real `HOME`; `TASK_SOURCE_DIR` = the task. Not a secrecy boundary |
 | Filesystem | the host | read-only; task at `/task-source`, candidate at `/candidate`, venv at `/task-venv`; `/tmp` is a 16 GiB **noexec** tmpfs; no network | the host |
 | Timeout | `--timeout-seconds` (default 21600) | `investigation.execution.harness_evaluation_timeout_seconds` (default **7200**) | same |
 
@@ -144,7 +148,7 @@ patterns: [...]}` checks candidate source tokens. At most 32 rubrics.
 | `container.gpu_count=N` | GPU tasks: GPUs per worker. |
 | `investigation.execution.gpu_evaluation=true` + `investigation.execution.harness_evaluated_attempts=true` | GPU tasks (gpu_evaluation requires harness evaluation). |
 | `investigation.execution.harness_evaluation_timeout_seconds=S` | Evaluations longer than 2 h. |
-| `investigation.execution.workers=W` | Parallel workers; needs `W x gpu_count` GPUs. |
+| `investigation.execution.workers=W` | Parallel workers; needs `W x gpu_count` GPUs. Container mode only for harness-evaluated tasks: native runs support one worker. |
 | `investigation.execution.max_program_evals_per_attempt=K` | Lower it for expensive evaluations. |
 | `ablations.execution.num_replications=R` | Expensive evaluations (default 5 replications per ablation variant). |
 | `execution.phases="..."` | Hand-written tasks: final evaluation needs a contract, so drop it. Quote the comma list: `'execution.phases="investigation,ablations,posthoc,paper"'`, or `agsci doctor` rejects it. |
