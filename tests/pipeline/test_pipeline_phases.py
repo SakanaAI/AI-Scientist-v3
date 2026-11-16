@@ -12,6 +12,7 @@ import dataclasses
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -54,6 +55,7 @@ from src.pipeline.phases import (
     build_posthoc_cmd,
     build_task_drafting_cmd,
     forward_paper_output,
+    paper_environment_overrides,
     run_cmd,
 )
 from src.variants_pipeline.cli import load_variants_config
@@ -436,6 +438,91 @@ def test_ablations_rejects_invalid_timeout() -> None:
             assert any(
                 f"ablations.execution.{field}" in error for error in validate_pipeline_config(cfg)
             ), (field, value)
+
+
+def test_native_ablations_reject_cross_task_and_contract_tasks_before_any_phase(tmp_path) -> None:
+    native = ["container.enabled=false", 'execution.phases="investigation,ablations"']
+    cfg = load_pipeline_config([CIRCPACK, *native])
+    assert not [error for error in validate_pipeline_config(cfg) if "native" in error or "extra_tasks" in error]
+
+    cfg = load_pipeline_config([CIRCPACK, *native, "ablations.paths.extra_tasks=[examples/grpo]"])
+    assert any("extra_tasks" in error for error in validate_pipeline_config(cfg))
+
+    contract_task = tmp_path / "contract_task"
+    shutil.copytree("examples/circpack", contract_task)
+    (contract_task / "task_contract.json").write_text("{}")
+    cfg = load_pipeline_config([f"task.dir={contract_task}", *native])
+    assert any("cannot run a contract task" in error for error in validate_pipeline_config(cfg))
+    cfg = load_pipeline_config([f"task.dir={contract_task}", 'execution.phases="investigation,ablations"'])
+    assert not any("cannot run a contract task" in error for error in validate_pipeline_config(cfg))
+
+
+def test_native_harness_evaluation_rejects_parallel_workers_before_any_phase() -> None:
+    def worker_errors(*overrides: str) -> list[str]:
+        cfg = load_pipeline_config([
+            CIRCPACK, "execution.phases=investigation", "investigation.execution.workers=2", *overrides,
+        ])
+        return [error for error in validate_pipeline_config(cfg) if "supports investigation.execution.workers=1" in error]
+
+    assert worker_errors("container.enabled=false", "investigation.execution.harness_evaluated_attempts=true")
+    assert not worker_errors("investigation.execution.harness_evaluated_attempts=true")
+    assert not worker_errors("container.enabled=false", "investigation.execution.harness_evaluated_attempts=false")
+
+
+def test_a_paper_phase_without_a_container_is_rejected_before_any_phase() -> None:
+    def paper_errors(*overrides: str) -> list[str]:
+        cfg = load_pipeline_config([CIRCPACK, 'execution.phases="investigation,paper"', *overrides])
+        return [error for error in validate_pipeline_config(cfg) if "paper phase needs a container" in error]
+
+    assert paper_errors("container.enabled=false")
+    assert paper_errors("container.paper_enabled=false")
+    assert not paper_errors()
+    assert not paper_errors("container.enabled=false", "container.paper_enabled=true")
+    cfg = load_pipeline_config([CIRCPACK, "container.enabled=false", "execution.phases=investigation"])
+    assert not [error for error in validate_pipeline_config(cfg) if "paper" in error]
+
+
+def test_a_native_runs_paper_container_gets_no_gpus() -> None:
+    native = load_pipeline_config([CIRCPACK, "container.enabled=false", "container.paper_enabled=true"])
+    assert paper_environment_overrides(native) == {"AGENT_CONTAINER_GPUS": ""}
+    assert paper_environment_overrides(load_pipeline_config([CIRCPACK])) == {}
+
+
+def test_paper_enabled_containerizes_only_the_paper_of_a_native_run(tmp_path) -> None:
+    cfg = load_pipeline_config([
+        CIRCPACK, "container.enabled=false", "container.paper_enabled=true",
+        "container.image=agent:latest", f"paths.run_dir={tmp_path / 'run'}",
+    ])
+    paths = derive_paths(cfg)
+    paper = build_paper_cmd(cfg, paths)
+    assert paper[paper.index("--container-image") + 1] == "agent:latest"
+    assert "--containerize" in paper
+    investigation = build_investigation_cmd(cfg, paths)
+    assert "container.enabled=false" in investigation
+    assert not any(arg.startswith("container.image=") for arg in investigation)
+
+    native = load_pipeline_config([CIRCPACK, "container.enabled=false", f"paths.run_dir={tmp_path / 'run'}"])
+    assert "--containerize" not in build_paper_cmd(native, derive_paths(native))
+
+
+def test_a_native_run_pins_the_agent_image_only_for_a_containerized_paper(monkeypatch) -> None:
+    leased: list[str] = []
+
+    class _Lease:
+        image_id = "sha256:agent"
+
+    def lease(ref: str, **_kwargs: object) -> _Lease:
+        leased.append(ref)
+        return _Lease()
+
+    monkeypatch.setattr("src.pipeline.cli.acquire_image_lease", lease)
+    native = ["container.enabled=false", "container.paper_enabled=true", "container.image=agent:latest"]
+    cfg = load_pipeline_config([CIRCPACK, *native])
+    _pin_evaluation_images(cfg, {"investigation", "ablations"}, derive_paths(cfg), [])
+    assert leased == [] and cfg.container.image == "agent:latest"
+    _pin_evaluation_images(cfg, {"investigation", "ablations", "paper"}, derive_paths(cfg), [])
+    assert leased == ["agent:latest"] and cfg.container.image == "sha256:agent"
+    assert cfg.ablations.sandbox_image is None  # native ablations still need no sandbox image
 
 
 # --------------------------------------------------------------------------- paper / posthoc commands
@@ -1274,11 +1361,13 @@ def test_pipeline_pins_evaluation_images_only_when_needed(
     monkeypatch.setattr("src.pipeline.cli.acquire_image_lease", unexpected_resolution)
     for name, enabled, selected in [
         ("containers_disabled", "false", {"investigation"}),
+        ("native_ablations", "false", {"investigation", "ablations"}),
         ("review_only", "true", {"review"}),
     ]:
         cfg = load_pipeline_config([CIRCPACK, f"container.enabled={enabled}", "container.image=agent:latest"])
         _pin_evaluation_images(cfg, selected, derive_paths(cfg), [])
         assert cfg.container.image == "agent:latest", name
+        assert cfg.ablations.sandbox_image is None, name
 
 
 def test_image_leases_are_verified_routed_and_released_despite_cleanup_failures(

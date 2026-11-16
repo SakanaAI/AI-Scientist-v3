@@ -45,6 +45,7 @@ _SUPPORTED_EVALUATION_PRODUCERS = {
     "harness_eval",
     "isolated_evaluator",
     "sandbox_host_eval",
+    "native_host_eval",
 }
 _REQUIRED_SOURCE_ARTIFACTS = (
     "metrics.json",

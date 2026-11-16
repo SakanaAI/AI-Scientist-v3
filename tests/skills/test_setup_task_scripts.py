@@ -198,3 +198,26 @@ def test_unpinned_requirements_fail_static_checks(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "pinned name==version" in result.stdout
+
+
+def test_sources_the_harness_cannot_inspect_are_flagged(tmp_path: Path) -> None:
+    task = scaffold(tmp_path)
+    (task / "program_0" / "src" / "big.py").write_text("x = 1\n" * 300_000)  # > 1 MiB
+
+    result = run_script("check_task.py", task)
+
+    assert "WARN  program_0 source exceeds harness inspection limit" in result.stdout
+
+
+def test_template_reads_replications_from_the_environment_like_ablations_send_them(tmp_path: Path) -> None:
+    task = scaffold(tmp_path)
+    results = tmp_path / "results"
+
+    subprocess.run(
+        [sys.executable, str(task / "evaluate.py"), "--program_path", str(task / "program_0" / "src" / "program.py"),
+         "--results_dir", str(results)],
+        cwd=task, capture_output=True, text=True, timeout=60, check=True,
+        env={**os.environ, "NUM_REPLICATIONS": "3"},
+    )
+
+    assert json.loads((results / "metrics.json").read_text())["num_replications"] == 3

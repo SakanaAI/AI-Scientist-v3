@@ -251,6 +251,11 @@ def _reject_quarantined_devices(devices: tuple[str, ...], descriptors: list[int]
         )
 
 
+def selector_devices(raw_selector: str | None) -> tuple[str, ...]:
+    """The devices a ``device=<ids>`` selector names; raises ``GpuSelectorError`` when malformed."""
+    return _selector_devices(raw_selector)
+
+
 def _selector_devices(raw_selector: str | None) -> tuple[str, ...]:
     selector = _unquote_selector(raw_selector)
     if not selector.startswith("device="):

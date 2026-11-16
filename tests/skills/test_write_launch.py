@@ -50,6 +50,23 @@ def test_native_slurm_launch_merges_user_overrides_last(tmp_path: Path) -> None:
     assert command[-1] == "agent.name=codex"
 
 
+def test_native_mode_keeps_the_paper_phase_in_docker(tmp_path: Path) -> None:
+    result, out = write_launch(tmp_path, "--scheduler", "local", "--mode", "native")
+
+    assert result.returncode == 0, result.stderr
+    command = launch_command(out)
+    assert "container.enabled=false" in command
+    assert "container.paper_enabled=true" in command
+
+    no_paper = tmp_path / "no_paper"
+    no_paper.mkdir()
+    result, out = write_launch(
+        no_paper, "--scheduler", "local", "--mode", "native", "--phases", "investigation,ablations"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "container.paper_enabled=true" not in launch_command(out)
+
+
 def test_phases_are_explicit_so_presets_cannot_add_review(tmp_path: Path) -> None:
     result, out = write_launch(tmp_path, "--scheduler", "local", "--", "preset=paper")
 
@@ -117,3 +134,10 @@ def test_launch_refuses_overwrite_and_uneven_gpu_split(tmp_path: Path) -> None:
 
     assert overwrite.returncode != 0 and "refusing to overwrite" in overwrite.stderr
     assert uneven.returncode != 0 and "not divisible" in uneven.stderr
+
+
+def test_native_gpu_runs_refuse_parallel_workers(tmp_path: Path) -> None:
+    result, out = write_launch(tmp_path, "--scheduler", "local", "--mode", "native", "--gpus", "8", "--workers", "2")
+
+    assert result.returncode != 0 and "--workers 1 only" in result.stderr
+    assert not out.exists()

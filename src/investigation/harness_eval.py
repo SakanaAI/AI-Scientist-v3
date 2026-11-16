@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import shutil
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .evaluate_program import credential_free_environment, run_contained
 from .harness_feedback import evaluation_feedback, search_metric_feedback
 from .harness_sources import read_candidate_sources as _read_candidate_sources
 from .evaluator_outputs import EvaluatorOutputContractError
@@ -401,7 +402,7 @@ def run_harness_evaluation(
             idea_id=idea_id,
             python_bin=python_bin,
             timeout_seconds=timeout_seconds,
-            environment=_evaluation_environment(
+            environment=_native_evaluation_environment(
                 environment,
                 gpu_evaluation=gpu_evaluation,
             ),
@@ -468,6 +469,25 @@ def run_harness_evaluation(
     return returncode
 
 
+def _native_evaluation_environment(
+    environment: Mapping[str, str], *, gpu_evaluation: bool
+) -> dict[str, str]:
+    """Native evaluations of attempts and of the seed share one environment: the caller's,
+    minus Python path overrides and credential-like variables (as for native variants)."""
+    return _evaluation_environment(
+        credential_free_environment(environment), gpu_evaluation=gpu_evaluation
+    )
+
+
+def _open_new_log(path: Path) -> int:
+    """A fresh harness log in an agent-writable directory, never written through a planted link."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+
+
 def _run_direct_evaluation(
     *,
     experiment_dir: Path,
@@ -480,6 +500,12 @@ def _run_direct_evaluation(
     timeout_seconds: int,
     environment: Mapping[str, str],
 ) -> int:
+    """Run the evaluator on the host in its own session and leave no descendant behind.
+
+    Output (stdout and stderr) streams to ``harness_evaluate_stdout.log`` instead of memory, so a
+    timed-out multi-hour evaluation still leaves its log. A timeout or a stop signal is recorded
+    in the manifest and raises ``SystemExit``, as before.
+    """
     manifest_path = program_dir / "evaluation_manifest.json"
     command = [
         python_bin,
@@ -493,38 +519,80 @@ def _run_direct_evaluation(
         "producer": "harness_eval",
         "attempt_id": attempt_id,
         "idea_id": idea_id,
-        "program_id": "program_1",
+        "program_id": program_dir.name,
         "command": command,
         "started_at": _utc_now(),
     }
     _write_json(manifest_path, manifest)
-    try:
-        result = subprocess.run(
+    stderr_note = _open_new_log(program_dir / "harness_evaluate_stderr.log")
+    with os.fdopen(stderr_note, "w", encoding="utf-8") as note:
+        note.write("stderr is merged into harness_evaluate_stdout.log\n")
+    with os.fdopen(_open_new_log(program_dir / "harness_evaluate_stdout.log"), "wb") as log:
+        run = run_contained(
             command,
-            cwd=str(experiment_dir),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-            env=dict(environment),
-        )
-    except subprocess.TimeoutExpired as exc:
-        manifest.update(
-            finished_at=_utc_now(),
-            exit_code=124,
+            cwd=experiment_dir,
+            environment=dict(environment),
             timeout_seconds=timeout_seconds,
+            stdout=log,
         )
+    if run.timed_out:
+        manifest.update(finished_at=_utc_now(), exit_code=124, timeout_seconds=timeout_seconds)
         _write_json(manifest_path, manifest)
-        raise SystemExit(f"harness evaluation timed out after {timeout_seconds}s") from exc
-    (program_dir / "harness_evaluate_stdout.log").write_text(
-        result.stdout or "", encoding="utf-8"
-    )
-    (program_dir / "harness_evaluate_stderr.log").write_text(
-        result.stderr or "", encoding="utf-8"
-    )
-    manifest.update(finished_at=_utc_now(), exit_code=result.returncode)
+        raise SystemExit(f"harness evaluation timed out after {timeout_seconds}s")
+    if run.signum is not None:
+        manifest.update(finished_at=_utc_now(), exit_code=128 + run.signum)
+        _write_json(manifest_path, manifest)
+        raise SystemExit(128 + run.signum)
+    assert run.returncode is not None
+    manifest.update(finished_at=_utc_now(), exit_code=run.returncode)
     _write_json(manifest_path, manifest)
-    return result.returncode
+    return run.returncode
+
+
+_NATIVE_EVALUATOR_FILES = ("capture.py", "evaluate.py")
+
+
+def bootstrap_native_incumbent(
+    *,
+    program_dir: Path,
+    task_dir: Path,
+    python_bin: str,
+    timeout_seconds: int,
+    environment: Mapping[str, str],
+    gpu_evaluation: bool,
+) -> int:
+    """Evaluate a native run's frozen seed exactly as native attempts are evaluated.
+
+    Native runs have no managed runtime or sandbox to vouch for the baseline, so the harness
+    earns the incumbent score itself before the first cycle. Like an attempt (``run.sh``), the
+    evaluator is a copy of the task's ``evaluate.py`` and ``capture.py`` next to the program,
+    runs from that directory with ``TASK_SOURCE_DIR`` set to the task, and is contained and
+    logged the same way.
+    Returns the evaluator's exit code; a timeout or stop signal raises ``SystemExit``.
+    """
+    program_dir = program_dir.resolve()
+    task_dir = task_dir.resolve()
+    entrypoint_rel = entrypoint_relpath_from_spec(program_dir)
+    if entrypoint_rel is None:
+        raise SystemExit(f"Seed program has no valid program_spec.toml: {program_dir}")
+    experiment_dir = program_dir.parent
+    evaluate_py = experiment_dir / "evaluate.py"
+    for staged in _NATIVE_EVALUATOR_FILES:  # what run.sh stages into an attempt's experiment dir
+        if (task_dir / staged).is_file():
+            shutil.copyfile(task_dir / staged, experiment_dir / staged)
+    return _run_direct_evaluation(
+        experiment_dir=experiment_dir,
+        evaluate_py=evaluate_py,
+        entrypoint=program_dir / entrypoint_rel,
+        program_dir=program_dir,
+        attempt_id="bootstrap",
+        idea_id="bootstrap",
+        python_bin=python_bin,
+        timeout_seconds=timeout_seconds,
+        environment=_native_evaluation_environment(
+            {**environment, "TASK_SOURCE_DIR": str(task_dir)}, gpu_evaluation=gpu_evaluation
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

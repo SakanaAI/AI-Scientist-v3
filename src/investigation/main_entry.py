@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -73,6 +74,36 @@ def _freeze_seed_program(seed_program_dir: Path, results_dir: Path) -> Path:
         shutil.rmtree(snapshot_root, ignore_errors=True)
         raise
     return resolve_path(frozen_seed)
+
+
+def _bootstrap_native_incumbent(
+    cfg: Any, task_dir: Path, seed_program_dir: Path, log_event_fn: Callable[..., None]
+) -> bool:
+    """Earn a native run's incumbent: evaluate the frozen seed as native attempts are evaluated."""
+    from .harness_eval import bootstrap_native_incumbent
+
+    task_python = task_dir / ".venv" / "bin" / "python"
+    python_bin = str(task_python) if os.access(task_python, os.X_OK) else sys.executable
+    log_path = seed_program_dir / "harness_evaluate_stdout.log"
+    log_event_fn(
+        "native_incumbent_evaluation_start", program_dir=str(seed_program_dir), log=str(log_path)
+    )
+    try:
+        returncode = bootstrap_native_incumbent(
+            program_dir=seed_program_dir,
+            task_dir=task_dir,
+            python_bin=python_bin,
+            timeout_seconds=cfg.execution.harness_evaluation_timeout_seconds,
+            environment=os.environ,
+            gpu_evaluation=cfg.execution.gpu_evaluation,
+        )
+    except SystemExit as exc:
+        log_event_fn(
+            "native_incumbent_evaluation_end", returncode=None, error=str(exc), log=str(log_path)
+        )
+        return False
+    log_event_fn("native_incumbent_evaluation_end", returncode=returncode, log=str(log_path))
+    return returncode == 0
 
 
 def _configure_contracted_agent_isolation(task_dir: Path, results_dir: Path) -> None:
@@ -633,6 +664,22 @@ def run_main_flow(
         )
         return 2
 
+    if (
+        cfg.execution.harness_evaluated_attempts
+        and not cfg.container.enabled
+        and cfg.execution.workers > 1
+    ):
+        log_event_fn(
+            "config_error",
+            reason="native_parallel_harness_evaluation_unsupported",
+            hint=(
+                "native harness-evaluated runs support one worker: parallel workers would each "
+                "re-evaluate the baseline and share GPUs; set execution.workers=1 or enable "
+                "containers"
+            ),
+        )
+        return 2
+
     if cfg.execution.gpu_evaluation and not cfg.execution.harness_evaluated_attempts:
         log_event_fn(
             "config_error",
@@ -1000,26 +1047,39 @@ def run_main_flow(
         baseline_score = (
             runtime_baseline_score(task_dir) if should_prepare_task_runtime else None
         )
-        if not reconcile_harness_incumbent(
-            task_dir=task_dir,
-            results_dir=results_dir,
-            seed_program_dir=seed_program_dir,
-            baseline_score=baseline_score,
-            baseline_correct=(
-                runtime_baseline_correct(task_dir) if should_prepare_task_runtime else None
-            ),
-            best_manifest=best_manifest,
-            outer_state=outer_state,
-            validated_baseline_program_dir=(
-                seed_program_dir if seed_is_validated_baseline else None
-            ),
-        ):
+
+        def reconcile() -> bool:
+            return reconcile_harness_incumbent(
+                task_dir=task_dir,
+                results_dir=results_dir,
+                seed_program_dir=seed_program_dir,
+                baseline_score=baseline_score,
+                baseline_correct=(
+                    runtime_baseline_correct(task_dir) if should_prepare_task_runtime else None
+                ),
+                best_manifest=best_manifest,
+                outer_state=outer_state,
+                validated_baseline_program_dir=(
+                    seed_program_dir if seed_is_validated_baseline else None
+                ),
+                trust_native=not containerize,
+            )
+
+        incumbent_ready = reconcile()
+        if not incumbent_ready and not containerize:
+            incumbent_ready = _bootstrap_native_incumbent(
+                cfg, task_dir, seed_program_dir, log_event_fn
+            ) and reconcile()
+        if not incumbent_ready:
             log_event_fn(
                 "config_error",
                 reason="missing_validated_harness_incumbent",
                 hint=(
                     "prepare the task runtime or pre-evaluate program_0 with complete "
                     "harness artifacts"
+                    if containerize
+                    else "the native baseline evaluation of program_0 failed or was not "
+                    f"correct; see {seed_program_dir / 'harness_evaluate_stdout.log'}"
                 ),
             )
             return 2

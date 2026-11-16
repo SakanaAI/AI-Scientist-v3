@@ -103,6 +103,7 @@ def _argv(tmp_path: Path, *extra: str) -> list[str]:
         f"paths.results_root={tmp_path / 'results'}",
         "run_id=20260101_000000",
         "container.enabled=false",
+        "container.paper_enabled=true",  # the paper phase always needs Docker
         "execution.phases=investigation",
         *extra,
     ]

@@ -128,6 +128,8 @@ def _run_variant_with_mock(
     host_error: BaseException | None = None,
     evaluation_timeout_seconds: int | None = None,
     observed_timeouts: list[tuple[str, int]] | None = None,
+    containerize: bool = False,
+    evaluators_used: list[str] | None = None,
 ) -> tuple:
     """Run the host-owned state machine with mocked agent and evaluator."""
     spec = _make_spec(tmp_path, kind=kind)
@@ -167,6 +169,13 @@ def _run_variant_with_mock(
             returncode=host_returncode, correct=True, metrics={"combined_score": 0.8},
         )
 
+    def recorded_host_eval(boundary: str):
+        def evaluate(**kwargs):
+            if evaluators_used is not None:
+                evaluators_used.append(boundary)
+            return fake_host_eval(**kwargs)
+        return evaluate
+
     (spec.variant_dir / "run_manifest.json").write_text(json.dumps({
         "status": "pending", "started_at": "old-start", "completed_at": "old-complete",
         "agent": "old-agent", "agent_model": "old-model", "agent_profile": "old-profile",
@@ -181,7 +190,14 @@ def _run_variant_with_mock(
         patch(
             "src.investigation.script_runners._execute_script_command", side_effect=fake_execute,
         ),
-        patch("src.variants_pipeline.execute.evaluate_variant_program", side_effect=fake_host_eval),
+        patch(
+            "src.variants_pipeline.execute.evaluate_variant_program",
+            side_effect=recorded_host_eval("sandbox"),
+        ),
+        patch(
+            "src.variants_pipeline.execute.evaluate_variant_program_natively",
+            side_effect=recorded_host_eval("native"),
+        ),
         patch.dict("os.environ", {"VARIANT_EVAL_SANDBOX_IMAGE": IMAGE}),
     ):
         result = _run_single_variant(
@@ -198,7 +214,7 @@ def _run_variant_with_mock(
             evaluator_source_digest=evaluator_tree_digest(retrofitted),
             task_source_dir=task_source,
             venv_dir=None,
-            containerize=False,
+            containerize=containerize,
             container_image="",
             container_network="bridge",
             container_auth_root=None,
@@ -312,6 +328,15 @@ def test_variant_state_machine_orders_authoring_host_evaluation_and_repair(tmp_p
     )
     assert (call_count, host_eval_count, result.eval_count) == (2, 1, 1)
     assert result.status == "completed"
+
+    # Native runs (containerize=False) evaluate on the host; containerized runs use the sandbox.
+    for containerize, boundary in ((False, "native"), (True, "sandbox")):
+        used: list[str] = []
+        result, _, host_eval_count = _run_variant_with_mock(
+            tmp_path / f"boundary_{boundary}", [_edit(), _verify()], max_evals=1,
+            containerize=containerize, evaluators_used=used,
+        )
+        assert (used, host_eval_count, result.status) == ([boundary], 1, "completed")
 
     # Controls evaluate program_0 without editing.
     result, call_count, host_eval_count = _run_variant_with_mock(
@@ -618,11 +643,19 @@ def test_rubric_contract_helpers_bound_context_guard_symlinks_and_validate_targe
 
 
 def test_execute_variant_agents_requires_isolation_verifies_evaluator_and_reports(tmp_path):
-    # Variant execution requires container isolation and evaluator integrity.
-    with pytest.raises(ValueError, match="container isolation"):
+    # Variant execution requires a sealed evaluator digest (container isolation is optional).
+    for containerize in (True, False):
+        with pytest.raises(ValueError, match="sealed evaluator digest"):
+            execute_variant_agents(
+                variant_specs=[_make_spec(tmp_path / f"isolation_{containerize}")],
+                variants_run_dir=tmp_path, containerize=containerize, agent="pi",
+                agent_model="model", timeout_seconds=60, timeout_grace_seconds=5,
+            )
+    # Isolation is an explicit choice: callers cannot drift into native execution.
+    with pytest.raises(TypeError, match="containerize"):
         execute_variant_agents(
-            variant_specs=[_make_spec(tmp_path / "isolation")], variants_run_dir=tmp_path,
-            agent="pi", agent_model="model", timeout_seconds=60, timeout_grace_seconds=5,
+            variant_specs=[], variants_run_dir=tmp_path, agent="pi", agent_model="model",
+            timeout_seconds=60, timeout_grace_seconds=5,
         )
 
     # Evaluator verification ignores managed runtime artifacts.
@@ -794,6 +827,32 @@ def test_sandbox_image_resolution_requires_immutable_digest_and_inspects_once(mo
 
 
 # ── pipeline stages and managed runtime preflight ─────────────────
+
+
+def test_native_pipeline_skips_sandbox_preflight_and_rejects_cross_task(tmp_path: Path, caplog) -> None:
+    # Native stage 5 needs only the evaluator digest: no sandbox image, no managed runtime.
+    cfg = _pipeline_config(tmp_path / "native")
+    assert not cfg.container.enabled
+    unexpected = AssertionError("native variants must not touch Docker")
+    with (
+        caplog.at_level("INFO"),
+        patch("src.variants_pipeline.execute.resolve_sandbox_image", side_effect=unexpected),
+        patch("src.investigation.task_runtime.prepare_task_runtime", side_effect=unexpected),
+    ):
+        run_variants_pipeline(cfg, stages={5})
+    assert "Native evaluation: no sandbox image or managed runtime to prepare" in caplog.text
+
+    # Contract tasks never run natively: agents would see the hidden final evaluator.
+    cfg = _pipeline_config(tmp_path / "contract")
+    (Path(cfg.paths.task_dir) / "task_contract.json").write_text("{}")
+    assert run_variants_pipeline(cfg, stages={1}) == 1
+    assert "Contract tasks require container.enabled=true" in caplog.text
+
+    # Cross-task variants still need containers.
+    cfg = _pipeline_config(tmp_path / "cross")
+    cfg.paths.extra_tasks = [str(tmp_path / "other_task")]
+    assert run_variants_pipeline(cfg, stages={6}) == 1
+    assert "Cross-task variants require container.enabled=true" in caplog.text
 
 
 def test_pipeline_stage_preflight_failures_and_stage_zero_boundaries(tmp_path: Path) -> None:

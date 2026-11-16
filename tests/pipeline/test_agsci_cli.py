@@ -231,6 +231,89 @@ def test_doctor_resolved_run_reads_overrides_like_run_and_fails_on_bad_override(
     assert "agsci run" in resolved["hint"]
 
 
+def test_doctor_docker_daemon_failure_only_warns_for_native_runs(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    _stub_repo_checks(monkeypatch)
+
+    calls = iter(range(10))
+
+    def run_doctor(*overrides: str) -> tuple[int, dict]:
+        host = _healthy_host(tmp_path / str(next(calls)))
+        host.probe_docker = lambda: (False, "permission denied while trying to connect")
+        rc = doctor.main(["--json", *overrides], host=host)
+        payload = json.loads(capsys.readouterr().out)
+        return rc, next(check for check in payload["checks"] if check["name"] == "docker daemon")
+
+    rc, daemon = run_doctor(
+        "examples/circpack",
+        "container.enabled=false",
+        'execution.phases="investigation,posthoc"',
+    )
+    assert daemon["status"] == "warn"
+    assert "not needed: container.enabled=false" in daemon["detail"]
+    assert rc == 0
+
+    # a host without the docker binary at all passes a native run too
+    host = _healthy_host(tmp_path / "no_docker", missing=frozenset({"docker"}))
+    host.probe_docker = lambda: (False, "docker CLI is not installed")
+    rc = doctor.main(
+        ["--json", "examples/circpack", "container.enabled=false", "execution.phases=investigation"],
+        host=host,
+    )
+    checks = {check["name"]: check for check in json.loads(capsys.readouterr().out)["checks"]}
+    assert checks["docker"]["status"] == checks["docker daemon"]["status"] == "warn"
+    assert rc == 0
+
+    # native ablations evaluate on the host too
+    rc, daemon = run_doctor(
+        "examples/circpack",
+        "container.enabled=false",
+        'execution.phases="investigation,ablations,posthoc"',
+    )
+    assert daemon["status"] == "warn"
+    assert rc == 0
+
+    rc, daemon = run_doctor("examples/circpack")
+    assert daemon["status"] == "fail"
+    assert rc == 1
+
+    rc, daemon = run_doctor()
+    assert daemon["status"] == "fail"
+    assert rc == 1
+
+
+def test_doctor_requires_docker_for_a_native_runs_paper_phase(tmp_path, capsys) -> None:
+    def run_doctor(*overrides: str) -> tuple[int, dict[str, dict]]:
+        host = _healthy_host(tmp_path / str(len(overrides)))
+        host.probe_docker = lambda: (False, "permission denied while trying to connect")
+        rc = doctor.main(["--json", "examples/circpack", "container.enabled=false", *overrides], host=host)
+        return rc, {check["name"]: check for check in json.loads(capsys.readouterr().out)["checks"]}
+
+    rc, checks = run_doctor('execution.phases="investigation,paper"')
+    assert checks["paper container"]["status"] == "fail"
+    assert "container.paper_enabled=true" in checks["paper container"]["detail"]
+    assert rc == 1
+
+    rc, checks = run_doctor('execution.phases="investigation,paper"', "container.paper_enabled=true")
+    assert checks["paper container"]["status"] == "ok"
+    assert checks["docker daemon"]["status"] == "fail"  # the paper container needs a working daemon
+    assert rc == 1
+    assert checks["resolved run"]["detail"].startswith("agent=claude mode=native (paper in Docker)")
+    assert checks["env file"]["detail"] != "none configured"  # the paper container mounts .env
+
+
+def test_doctor_rejects_a_gpu_selector_the_run_would_reject(tmp_path) -> None:
+    cfg = doctor.load_run_config(["examples/circpack", "container.gpu_count=2"])
+    assert not isinstance(cfg, doctor.CheckResult)
+    for selector, status in (("GPU-aaaa,GPU-bbbb", "fail"), ("device=GPU-aaaa,GPU-bbbb", "ok")):
+        host = _healthy_host(tmp_path / status)
+        host.environ = {"AGENT_CONTAINER_GPUS": selector}
+        result = doctor.check_required_gpus(host, cfg)
+        assert result.status == status, (selector, result)
+        assert ("device=<UUID" in result.hint) == (status == "fail")
+
+
 def test_doctor_required_gpus_compares_preset_count_selector_host_and_workers(tmp_path) -> None:
     host = _healthy_host(tmp_path)  # nvidia-smi reports two GPUs
 

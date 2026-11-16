@@ -378,6 +378,10 @@ def discover_program_indices(root_dir: Path) -> list[int]:
     return sorted(indices)
 
 
+# Variant evaluations the host ran, and the boundary each producer's manifest must declare.
+_HOST_EVALUATION_BOUNDARIES = {"sandbox_host_eval": "sandbox", "native_host_eval": "native"}
+
+
 def evaluation_results_complete(program_dir: Path) -> bool:
     """Require a valid completion manifest when an evaluator created one."""
     pending_path = program_dir / ".evaluation_pending"
@@ -406,12 +410,13 @@ def evaluation_results_complete(program_dir: Path) -> bool:
             and set(summaries) == {"metrics.json", "correct.json"}
         )
 
-    if manifest.get("producer") == "sandbox_host_eval" or (
-        manifest.get("execution_boundary") == "sandbox" and "returncode" in manifest
-    ):
+    host_boundary = _HOST_EVALUATION_BOUNDARIES.get(str(manifest.get("producer")))
+    if host_boundary is None and manifest.get("execution_boundary") == "sandbox" and "returncode" in manifest:
+        host_boundary = "sandbox"  # legacy sandbox manifests carry no producer
+    if host_boundary is not None:
         return (
-            manifest.get("producer") in (None, "sandbox_host_eval")
-            and manifest.get("execution_boundary") == "sandbox"
+            manifest.get("producer") in (None, *_HOST_EVALUATION_BOUNDARIES)
+            and manifest.get("execution_boundary") == host_boundary
             and manifest.get("program_id") == program_dir.name
             and manifest.get("returncode") == 0
             and isinstance(manifest.get("command"), list)

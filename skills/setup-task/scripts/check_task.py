@@ -30,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.investigation import evaluate_program as harness_eval  # noqa: E402
+from src.investigation import harness_sources  # noqa: E402
 from src.investigation.files import (  # noqa: E402
     load_task_copy_ignore_patterns,
     missing_task_scaffold_files,
@@ -143,6 +144,18 @@ def check_snapshot(task_dir: Path, report: Report) -> None:
         report.ok(message)
 
 
+def check_program_source_limits(task_dir: Path, report: Report) -> None:
+    """Harness-evaluated attempts inspect every candidate source with these exact rules (size,
+    entry count, depth, no symlinks); a program_0 that breaks them fails every such attempt."""
+    try:
+        harness_sources.read_candidate_sources(task_dir / "program_0")
+    except SystemExit as exc:
+        message = str(exc).replace("program_1", "program_0")
+        report.warn(f"{message}: every harness-evaluated attempt (GPU tasks) would fail")
+    else:
+        report.ok("program_0 sources pass harness inspection")
+
+
 def static_checks(task_dir: Path) -> Report:
     report = Report()
     print(f"static checks: {task_dir}")
@@ -152,6 +165,7 @@ def static_checks(task_dir: Path) -> Report:
     check_evaluator_source(task_dir, report)
     check_requirements(task_dir, report)
     check_snapshot(task_dir, report)
+    check_program_source_limits(task_dir, report)
     return report
 
 

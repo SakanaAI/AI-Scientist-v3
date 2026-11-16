@@ -12,7 +12,7 @@ All options are Hydra overrides to `agsci run <task_dir> ...`, run from the repo
 | Attempt time | `investigation.execution.run_timeout_seconds` (one agent attempt, default 21600) and `investigation.execution.idea_timeout_seconds` |
 | Evaluations | `investigation.execution.max_program_evals_per_attempt=K`; GPU tasks: `investigation.execution.harness_evaluation_timeout_seconds=S` (default 7200); `ablations.execution.num_replications=R` (default 5) |
 | GPUs | `container.gpu_count=N` (per worker), `investigation.execution.gpu_evaluation=true`, `investigation.execution.harness_evaluated_attempts=true` |
-| Parallelism | `investigation.execution.workers=W` (needs `W × gpu_count` visible GPUs) |
+| Parallelism | `investigation.execution.workers=W` (needs `W × gpu_count` visible GPUs; native harness-evaluated runs support only 1) |
 | Phases | `'execution.phases="investigation,ablations,posthoc,paper"'` (quoted for `agsci doctor`; add `task_drafting`, `final_evaluation`, `revision` in container mode, `review` only with consent). `preset=paper` alone selects all of them, including `review` |
 | Paper | `paper.paper_format=iclr\|alife`, `paper.instruct=<md>`, `paper.contributions_file=<md>`; investigation prompt: `investigation.paths.instruct=<md>` |
 | External review | add `review` to `execution.phases` (sends the manuscript to OpenAI, so it needs consent) |
@@ -26,7 +26,7 @@ All options are Hydra overrides to `agsci run <task_dir> ...`, run from the repo
 | - | - | - |
 | Needs | Docker on the host that runs the run; built image | agent CLI, Git, Node.js on the host |
 | Isolation | agents and evaluators sandboxed | agents run with the user's own permissions |
-| Phases | all | not `task_drafting`, `final_evaluation`, or `revision` |
+| Phases | all | not `task_drafting`, `final_evaluation`, or `revision`; ablations run natively (no contract tasks, no `ablations.paths.extra_tasks`); `paper` needs `container.paper_enabled=true` (Docker and the image on the host that runs the paper: its evidence audit and LaTeX build run only there) |
 | GPUs | `AGENT_CONTAINER_GPUS` or the first visible ones | the GPUs Slurm or `CUDA_VISIBLE_DEVICES` expose |
 | Toolchain | image has no C compiler or CUDA toolkit | host toolchain (Triton, `torch.compile` work) |
 

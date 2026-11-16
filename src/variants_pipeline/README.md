@@ -113,6 +113,25 @@ Stage 5 sealed evaluation runs the evaluator in a network-isolated container
 with direct container GPUs; its candidate and results mounts are private to
 that sandbox.
 
+With `container.enabled=false` (native runs, e.g. GPU hosts without Docker or
+tasks that need a compiler, JIT kernels, or data outside the task), variant
+agents run on the host and `native_eval.py` runs the sealed evaluator directly:
+the native investigation environment (parent environment without
+credential-like variables or Python path overrides, real `HOME`), a private
+`TMPDIR` and results directory, the task's `.venv` Python if it has one (else
+the harness interpreter, with a warning), and `--num_replications N` when
+`NUM_REPLICATIONS` > 1. The evaluator and all its descendants, including ones
+that start their own sessions such as torchrun workers, are stopped on exit,
+timeout, and SIGINT/SIGTERM (`run_contained`, shared with native
+investigation). Results pass the same promotion contract as the sandbox
+(canonicalize, allowlist, 64 MiB cap, no symlinks or collisions). There is no
+image or managed-runtime preflight natively, so `program_0` is first evaluated
+with the control variant. Agents and evaluators share your permissions; the
+sealed evaluator digest, checked before and after every evaluation, detects
+tampering with the evaluator tree (it does not cover `.venv`, `resources/` or
+`results/`). Contract tasks and cross-task variants (`paths.extra_tasks`) still
+require containers and are refused up front.
+
 Before any stage-5 artifact or agent call, the pipeline provisions
 `paths.task_dir/.venv` in the immutable evaluation image and proves
 `program_0` with the sealed evaluator. `.agentic_runtime.json` binds the

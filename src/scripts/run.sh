@@ -1426,7 +1426,14 @@ if [ "$HARNESS_EVALUATED_ATTEMPT" -eq 1 ]; then
   if [ "$CONTAINERIZE" -eq 1 ] && [ -n "${AGENTIC_TASK_FAILURE_FD:-}" ]; then
     HARNESS_EVAL_ARGS+=(--task-failure-fd "$AGENTIC_TASK_FAILURE_FD")
   fi
-  "$PYTHON_BIN" -m src.investigation.harness_eval "${HARNESS_EVAL_ARGS[@]}"
+  if [ "$CONTAINERIZE" -eq 1 ]; then
+    "$PYTHON_BIN" -m src.investigation.harness_eval "${HARNESS_EVAL_ARGS[@]}"
+  else
+    # Native evaluators run from the experiment copy, which holds only evaluate.py: like the
+    # sandbox (/task-source), point them at the task source for resources they read.
+    TASK_SOURCE_DIR="$CANONICAL_TASK_SOURCE_DIR" \
+      "$PYTHON_BIN" -m src.investigation.harness_eval "${HARNESS_EVAL_ARGS[@]}"
+  fi
 fi
 
 "$PYTHON_BIN" - "$EXPERIMENT_DIR" "$ATTEMPT_ID" "$IDEA_ID" "$EXPERIMENT_DIR/active_rubrics.json" "$MAX_PROGRAM_EVALS_PER_ATTEMPT" "$GLOBAL_MEMORY_JSONL_FILE" <<'PY'

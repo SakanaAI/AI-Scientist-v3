@@ -7,7 +7,7 @@ from pathlib import Path
 import stat
 from collections.abc import Iterator
 
-MAX_SOURCE_FILE_BYTES = 128 * 1024
+MAX_SOURCE_FILE_BYTES = 1024 * 1024  # real training scripts exceed 128 KiB (noise track 3: 165 KB)
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_SOURCE_ENTRIES = 2048
 MAX_SOURCE_DEPTH = 32

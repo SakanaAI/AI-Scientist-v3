@@ -33,6 +33,7 @@ from src.investigation.container_gpus import (
     GpuSelectorError,
     bounded_docker_gpu_selector,
     gpu_pool_label,
+    selector_devices,
     validate_gpu_allocation,
 )
 from src.investigation.constants import (
@@ -153,6 +154,18 @@ def check_tool(host: Host, name: str, *, required: bool, hint: str = "") -> Chec
     if path is None:
         return CheckResult(name, FAIL if required else WARN, "not found on PATH", hint=hint)
     return CheckResult(name, OK, _version_detail(host, name, path))
+
+
+def docker_optional_for_native_run(result: CheckResult) -> CheckResult:
+    """A native run (container.enabled=false) never talks to Docker: its daemon check only warns."""
+    if result.name not in {"docker", "docker daemon"} or result.status != FAIL:
+        return result
+    return CheckResult(
+        result.name,
+        WARN,
+        f"{result.detail} (not needed: container.enabled=false)",
+        hint=result.hint,
+    )
 
 
 def check_docker_daemon(host: Host) -> CheckResult:
@@ -322,7 +335,7 @@ def _dotenv_names(path: Path) -> set[str]:
 
 
 def _env_file_path(host: Host, cfg: PipelineConfig) -> Path | None:
-    if not cfg.container.enabled:
+    if not uses_docker(cfg):  # a native run's containerized paper mounts it too
         return None
     raw = str(cfg.container.env_file or "").strip()
     if not raw:
@@ -333,6 +346,8 @@ def _env_file_path(host: Host, cfg: PipelineConfig) -> Path | None:
 
 def check_run_summary(cfg: PipelineConfig) -> CheckResult:
     mode = "container" if cfg.container.enabled else "native"
+    if not cfg.container.enabled and uses_docker(cfg):
+        mode = "native (paper in Docker)"
     detail = (
         f"agent={cfg.agent.name} mode={mode} phases={cfg.execution.phases} "
         f"gpu_count={cfg.container.gpu_count}"
@@ -454,7 +469,15 @@ def check_required_gpus(host: Host, cfg: PipelineConfig) -> CheckResult:
             )
         return CheckResult("required gpus", OK, "none")
     if selector:
-        selected = selector.count(",") + 1
+        try:
+            selected = len(selector_devices(selector))
+        except GpuSelectorError as exc:
+            return CheckResult(
+                "required gpus",
+                FAIL,
+                f"AGENT_CONTAINER_GPUS is malformed: {exc}",
+                hint="use AGENT_CONTAINER_GPUS=device=<UUID,...>, or unset it to discover via nvidia-smi",
+            )
         if selected != required:
             return CheckResult(
                 "required gpus",
@@ -557,9 +580,40 @@ def check_task_scaffold(host: Host, cfg: PipelineConfig) -> CheckResult:
     return CheckResult("task", OK, f"{task_dir.name}: scaffold will be drafted (missing {names})")
 
 
+def _paper_selected(cfg: PipelineConfig) -> bool:
+    from src.pipeline.config import parse_pipeline_phases
+
+    try:
+        return "paper" in parse_pipeline_phases(cfg.execution.phases)
+    except ValueError:
+        return False  # the run itself reports the malformed phase list
+
+
+def uses_docker(cfg: PipelineConfig) -> bool:
+    """Whether any selected phase runs in Docker (a native run may still containerize its paper)."""
+    from src.pipeline.config import phase_uses_container
+
+    return cfg.container.enabled or (_paper_selected(cfg) and phase_uses_container(cfg, "paper"))
+
+
+def check_paper_container(cfg: PipelineConfig) -> CheckResult:
+    from src.pipeline.config import PAPER_NEEDS_CONTAINER_ERROR, phase_uses_container
+
+    if not _paper_selected(cfg):
+        return CheckResult("paper container", OK, "paper phase not selected")
+    if phase_uses_container(cfg, "paper"):
+        return CheckResult("paper container", OK, "paper runs in Docker")
+    return CheckResult(
+        "paper container",
+        FAIL,
+        PAPER_NEEDS_CONTAINER_ERROR,
+        hint="add container.paper_enabled=true (needs Docker and the agent image on this host)",
+    )
+
+
 def run_checks_for(host: Host, cfg: PipelineConfig) -> list[CheckResult]:
-    results = [check_run_summary(cfg)]
-    if cfg.container.enabled:
+    results = [check_run_summary(cfg), check_paper_container(cfg)]
+    if uses_docker(cfg):
         results.append(
             check_agent_image(host, cfg.container.image, network=cfg.container.network, required=True)
         )
@@ -643,6 +697,8 @@ def main(argv: list[str] | None = None, *, host: Host | None = None) -> int:
         if isinstance(cfg, CheckResult):
             results.append(cfg)
         else:
+            if not uses_docker(cfg):
+                results = [docker_optional_for_native_run(result) for result in results]
             results.extend(run_checks_for(host, cfg))
     else:
         results.append(check_agent_image(host, DEFAULT_CONTAINER_IMAGE, required=False))

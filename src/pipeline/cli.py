@@ -94,6 +94,7 @@ from .config import (
     describe_pipeline_config,
     flatten_mapping,
     parse_pipeline_phases,
+    phase_uses_container,
     register_pipeline_schema,
     validate_investigation_resume_state,
     validate_completed_investigation,
@@ -174,6 +175,7 @@ from .phases import (
     build_paper_cmd,
     build_paper_cmd_without_final,
     build_paper_cmd_with_posthoc,
+    paper_environment_overrides,
     build_posthoc_cmd,
     build_task_drafting_cmd,
     forward_paper_output,
@@ -1201,8 +1203,8 @@ def _run_pipeline(
         )
         image_preflight_failed = False
         if (
-            cfg.container.enabled
-            and phase in container_phases
+            phase in container_phases
+            and phase_uses_container(cfg, phase)
             and not cfg.execution.dry_run
         ):
             try:
@@ -1572,6 +1574,7 @@ def _run_pipeline(
             rc = run_cmd(
                 paper_cmd,
                 dry_run=cfg.execution.dry_run,
+                env_overrides=paper_environment_overrides(cfg),
                 output_line_fn=lambda line: forward_paper_output(line, event_fn=log_event),
             )
         elif phase == "review":
@@ -1983,7 +1986,7 @@ def _pin_evaluation_images(
     agent_image_ref = cfg.container.image
     agent_image_id: str | None = None
     lease_scope = str(paths.run_dir.resolve())
-    if cfg.container.enabled and selected.intersection(container_phases):
+    if any(phase_uses_container(cfg, phase) for phase in selected.intersection(container_phases)):
         agent_lease = acquire_image_lease(
             agent_image_ref,
             lease_scope=lease_scope,
@@ -1993,8 +1996,8 @@ def _pin_evaluation_images(
         agent_image_id = agent_lease.image_id
         cfg.container.image = agent_image_id
 
-    if "ablations" not in selected:
-        return
+    if "ablations" not in selected or not cfg.container.enabled:
+        return  # native ablations evaluate on the host, without a sandbox image
     sandbox_ref = cfg.ablations.sandbox_image or agent_image_ref
     if agent_image_id is not None and sandbox_ref == agent_image_ref:
         sandbox_image_id = agent_image_id

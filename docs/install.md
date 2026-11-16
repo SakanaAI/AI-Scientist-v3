@@ -170,6 +170,7 @@ unless told otherwise.
 | `container.network` | `bridge` | `host` | Docker network mode (`bridge`, `host`) |
 | `container.auth_root` | `~` | same | Auth credentials root directory |
 | `container.env_file` | `""` | `.env` | Path to `.env` file for the container |
+| `container.paper_enabled` | n/a | `null` (follows `container.enabled`) | Run only the paper phase in Docker; set `true` for a native run with a paper (its evidence audit and LaTeX build need the image) |
 
 `container.network=host` is often required on locked-down machines where the
 default bridge network cannot reach the provider APIs. The post-hoc phase keeps
