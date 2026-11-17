@@ -321,3 +321,25 @@ def test_baseline_skips_unreadable_files(tmp_path: Path) -> None:
     source_baseline.record_task_source_baseline(task_dir, record)
 
     assert set(json.loads(record.read_text(encoding="utf-8"))["files"]) == {"task.md"}
+
+
+def test_baseline_skips_files_that_change_while_hashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("# one\n", encoding="utf-8")
+    (task_dir / "train.log").write_text("step 1\n", encoding="utf-8")
+    real_file_sha256 = source_baseline.file_sha256
+
+    def file_sha256_racing_with_writer(path: Path) -> str:
+        if path.name == "train.log":
+            raise publication.TaskPublicationError(f"task publication source changed while reading: {path}")
+        return real_file_sha256(path)
+
+    monkeypatch.setattr(source_baseline, "file_sha256", file_sha256_racing_with_writer)
+    record = tmp_path / "record.json"
+
+    source_baseline.record_task_source_baseline(task_dir, record)
+
+    assert set(json.loads(record.read_text(encoding="utf-8"))["files"]) == {"task.md"}

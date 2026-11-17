@@ -90,7 +90,9 @@ def _source_file_digests(root: Path, *, output_dir: Path) -> dict[str, str]:
                 continue
             try:
                 digests[path.relative_to(root).as_posix()] = file_sha256(path)
-            except OSError:
+            except (OSError, TaskPublicationError):
+                # Unreadable files, and files still being written, stay unrecorded and
+                # therefore never replaceable.
                 continue
     return digests
 
