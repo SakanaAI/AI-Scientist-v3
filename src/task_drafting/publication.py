@@ -30,7 +30,12 @@ from src.task_drafting.publication_fs import (
     unlink_regular_file_if_identity as _unlink_regular_file_if_identity,
     validate_tree as _validate_tree,
 )
-from src.task_drafting.source_baseline import SourceBaseline, load_source_baseline
+from src.task_drafting.source_baseline import (
+    REPLACED_SOURCE_DIRNAME,
+    SourceBaseline,
+    load_source_baseline,
+    save_replaced_originals,
+)
 from src.task_drafting.qualification import (
     TaskQualificationError,
     load_task_qualification_receipt,
@@ -113,13 +118,15 @@ def publish_task_scaffold(
     qualification_receipt_path: Path | None = None,
     max_runtime_bytes: int,
     source_baseline_path: Path | None = None,
-) -> None:
+) -> tuple[str, ...]:
     """Publish one validated scaffold without consuming its staged source.
 
     ``source_baseline_path`` points at the record written by
     :func:`record_task_source_baseline` when the task was staged. Destination
     artifacts that still match it are replaced by the accepted scaffold; without it,
-    any differing destination artifact aborts publication.
+    any differing destination artifact aborts publication. The replaced originals are
+    copied to ``output_dir/replaced_task_source`` first, and their task-relative paths
+    are returned.
     """
     task_dir, staged_task_dir, output_dir, alignment_report_path = _validated_roots(
         task_dir, staged_task_dir, output_dir, alignment_report_path
@@ -150,7 +157,7 @@ def publish_task_scaffold(
         plan,
         qualification_bytes,
     ):
-        return
+        return ()
     _preflight_destination(
         task_dir,
         staged_task_dir,
@@ -159,6 +166,16 @@ def publish_task_scaffold(
         qualification_bytes,
         baseline,
     )
+    replaced: tuple[str, ...] = ()
+    if baseline is not None:
+        replaced = save_replaced_originals(
+            baseline,
+            task_dir=task_dir,
+            staged_task_dir=staged_task_dir,
+            files=plan.files,
+            resources=plan.resources,
+            backup_dir=output_dir / REPLACED_SOURCE_DIRNAME,
+        )
     _publish_bytes(plan.manifest, task_dir / _PUBLICATION_PATH)
 
     for relative in plan.files:
@@ -201,6 +218,7 @@ def publish_task_scaffold(
     except BaseException:
         _unlink_regular_file_if_identity(marker_path, marker_identity)
         raise
+    return replaced
 
 
 def task_publication_plan_sha256(

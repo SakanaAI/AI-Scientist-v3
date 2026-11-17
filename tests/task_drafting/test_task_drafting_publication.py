@@ -79,8 +79,8 @@ class _Publication:
             **overrides,
         }
 
-    def publish(self, **overrides) -> None:
-        publication.publish_task_scaffold(**self.arguments(**overrides))
+    def publish(self, **overrides) -> tuple[str, ...]:
+        return publication.publish_task_scaffold(**self.arguments(**overrides))
 
     def plan_sha256(self) -> str:
         return publication.task_publication_plan_sha256(

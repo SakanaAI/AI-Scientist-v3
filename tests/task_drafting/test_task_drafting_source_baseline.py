@@ -57,6 +57,34 @@ def test_repaired_scaffold_replaces_source_that_matches_baseline(tmp_path: Path)
     assert not any(path.name.startswith(".resources.") for path in fx.task_dir.iterdir())
 
 
+def test_replaced_originals_are_saved_in_the_drafting_output(tmp_path: Path) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    original_evaluator = (fx.task_dir / "evaluate.py").read_bytes()
+    original_resources = {
+        path.relative_to(fx.task_dir): path.read_bytes()
+        for path in (fx.task_dir / "resources").rglob("*")
+        if path.is_file()
+    }
+
+    replaced = fx.publish(source_baseline_path=baseline)
+
+    saved = fx.output_dir / source_baseline.REPLACED_SOURCE_DIRNAME
+    assert replaced == ("evaluate.py", "task_contract.json", "resources/")
+    assert (saved / "evaluate.py").read_bytes() == original_evaluator
+    assert {
+        relative: (saved / relative).read_bytes() for relative in original_resources
+    } == original_resources
+
+
+def test_publication_without_replacements_saves_nothing(tmp_path: Path) -> None:
+    fx = _make_fx(tmp_path)
+    baseline = fx.output_dir / "task_source_baseline.json"
+    source_baseline.record_task_source_baseline(fx.task_dir, baseline)
+
+    assert fx.publish(source_baseline_path=baseline) == ()
+    assert not (fx.output_dir / source_baseline.REPLACED_SOURCE_DIRNAME).exists()
+
+
 def test_republishing_a_replaced_scaffold_is_a_no_op(tmp_path: Path) -> None:
     fx, baseline = _make_predrafted_fx(tmp_path)
     fx.publish(source_baseline_path=baseline)

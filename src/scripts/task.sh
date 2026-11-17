@@ -3634,11 +3634,12 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[3])
 
 from src.task_drafting.publication import TaskPublicationError, publish_task_scaffold
+from src.task_drafting.source_baseline import REPLACED_SOURCE_DIRNAME
 from src.investigation.task_alignment import TaskAlignmentError
 from src.investigation.task_contract import TaskContractError
 
 try:
-    publish_task_scaffold(
+    replaced = publish_task_scaffold(
         task_dir=Path(sys.argv[1]),
         staged_task_dir=Path(sys.argv[2]),
         output_dir=Path(sys.argv[4]),
@@ -3649,6 +3650,12 @@ try:
     )
 except (OSError, TaskPublicationError, TaskAlignmentError, TaskContractError) as exc:
     raise SystemExit(str(exc)) from exc
+if replaced:
+    print(
+        "[task.sh] replaced unchanged task source with the repaired scaffold: "
+        + ", ".join(replaced)
+        + f"; originals saved in {Path(sys.argv[4]) / REPLACED_SOURCE_DIRNAME}"
+    )
 print("[task.sh] validated drafted task scaffold files")
 PY
 discard_staged_runtime_for_repair

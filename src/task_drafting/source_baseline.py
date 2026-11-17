@@ -10,11 +10,14 @@ from pathlib import Path
 from src.task_drafting.publication_fs import (
     RESOURCE_MANIFEST,
     TaskPublicationError,
+    atomic_copy,
     atomic_write,
     file_sha256,
     read_regular_bytes,
     real_path,
+    regular_tree_files,
     resource_tree_digest,
+    same_file_bytes,
 )
 
 _MAX_SOURCE_BASELINE_BYTES = 64 * 1024 * 1024
@@ -109,3 +112,38 @@ def load_source_baseline(baseline_path: Path | None) -> SourceBaseline | None:
     ):
         raise TaskPublicationError(f"invalid task source baseline: {baseline_path}")
     return SourceBaseline(file_sha256=dict(files), resources_sha256=resources_sha256)
+
+
+REPLACED_SOURCE_DIRNAME = "replaced_task_source"
+
+
+def save_replaced_originals(
+    baseline: SourceBaseline,
+    *,
+    task_dir: Path,
+    staged_task_dir: Path,
+    files: tuple[Path, ...],
+    resources: Path | None,
+    backup_dir: Path,
+) -> tuple[str, ...]:
+    """Copy every source artifact that publication is about to replace into ``backup_dir``.
+
+    Only artifacts that still match the baseline and differ from the accepted scaffold
+    are replaced, so only those are saved. Returns their task-relative paths.
+    """
+    saved: list[str] = []
+    for relative in files:
+        target = task_dir / relative
+        if baseline.matches_file(target, relative) and not same_file_bytes(
+            staged_task_dir / relative, target
+        ):
+            atomic_copy(target, backup_dir / relative, replace_existing=True)
+            saved.append(relative.as_posix())
+    if resources is not None:
+        target = task_dir / resources
+        accepted = resource_tree_digest(staged_task_dir / resources, RESOURCE_MANIFEST)
+        if baseline.matches_resources(target) and baseline.resources_sha256 != accepted:
+            for path in regular_tree_files(target):
+                atomic_copy(path, backup_dir / resources / path.relative_to(target), replace_existing=True)
+            saved.append(f"{resources.as_posix()}/")
+    return tuple(saved)
