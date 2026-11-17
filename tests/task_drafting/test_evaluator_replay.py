@@ -8,10 +8,13 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
+
 from src.investigation import task_runtime as runtime
 from src.investigation.evaluator_replay import EvaluationOutcome, replay_mismatch
 from tests.final_evaluation.test_final_evaluation import _write_contract_task
 from src.task_drafting.checks import run_gate
+from src.task_drafting.prompt_contract import expand_evidence_contract
 from tests.program_testutils import make_program_dir
 from tests.task_drafting.test_baseline_artifacts import _Broker
 from tests.task_drafting.test_task_drafting_checks import EVALUATOR, _scaffold, _settings
@@ -128,3 +131,14 @@ def test_native_search_smoke_accepts_task_owned_secret(tmp_path):
     )
     task = _scaffold(tmp_path / "fixed", search=fixed)
     assert run_gate("search-smoke", _settings(task)).status == "pass"
+
+
+@pytest.mark.parametrize(
+    "prompt", ["draft_task.md", "repair_task.md", "repair_task_smoke.md", "repair_task_preflight.md"],
+)
+def test_scaffold_writing_prompts_forbid_per_invocation_secrets(prompt):
+    template = (Path(__file__).resolve().parents[2] / "src/prompts" / prompt).read_text("utf-8")
+    expanded = expand_evidence_contract(template)
+    assert "{{EVALUATOR_REPRODUCIBILITY_RULE}}" not in expanded
+    assert "# Evaluator reproducibility" in expanded
+    assert "never draw it per invocation" in expanded

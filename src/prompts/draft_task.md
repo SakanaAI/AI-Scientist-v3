@@ -259,6 +259,8 @@ Rules:
 - Keep baseline behavior deterministic and lightweight.
 - Prefer the smallest dependency set that still supports the evaluator, baseline, and plausible task-goal methods.
 
+{{EVALUATOR_REPRODUCIBILITY_RULE}}
+
 # Candidate interface documentation and failure feedback
 
 Document the candidate operations in the starter candidate's docstrings: request fields, required

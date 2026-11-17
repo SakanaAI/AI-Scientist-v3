@@ -43,3 +43,5 @@ Preflight diagnostic (base64): {{TASK_PREFLIGHT_DIAGNOSTIC}}
 - Treat these rules as defense in depth; the harness independently owns publication selection,
   validation, and safety.
 - Re-run focused local checks when possible. Finish non-zero if the error cannot be repaired faithfully.
+
+{{EVALUATOR_REPRODUCIBILITY_RULE}}

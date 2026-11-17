@@ -165,6 +165,8 @@ You are a task-scaffold repair agent. Fix the reported alignment or harness qual
   selection, validation, and safety.
 - Do not edit the judge report. Finish non-zero if a requested repair cannot be made faithfully.
 
+{{EVALUATOR_REPRODUCIBILITY_RULE}}
+
 # Seed-independent workload configuration
 
 Candidates must accept arbitrary valid reset seeds. Seeds initialize randomness; they must not
