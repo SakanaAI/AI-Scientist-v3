@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import time
@@ -63,6 +64,14 @@ class _PublicationPlan:
     resources: Path | None
     resource_sha256: str | None
     manifest: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _Replacements:
+    """Destination artifacts that still hold the pre-drafting source bytes."""
+
+    files: frozenset[Path]
+    resources: bool
 
 
 def validate_staged_runtime_resources(
@@ -159,7 +168,7 @@ def publish_task_scaffold(
         qualification_bytes,
     ):
         return ()
-    _preflight_destination(
+    replaceable = _preflight_destination(
         task_dir,
         staged_task_dir,
         alignment_report_path,
@@ -174,7 +183,8 @@ def publish_task_scaffold(
     for relative in plan.files:
         source = staged_task_dir / relative
         target = task_dir / relative
-        if baseline is not None and baseline.matches_file(target, relative):
+        if relative in replaceable.files:
+            assert baseline is not None
             if _replace_verified_file(
                 source,
                 target,
@@ -189,8 +199,8 @@ def publish_task_scaffold(
     if plan.resources is not None:
         source = staged_task_dir / plan.resources
         target = task_dir / plan.resources
-        if baseline is not None and baseline.matches_resources(target):
-            assert baseline.resources_sha256 is not None
+        if replaceable.resources:
+            assert baseline is not None and baseline.resources_sha256 is not None
             if replace_resources(
                 source,
                 target,
@@ -518,8 +528,10 @@ def _preflight_destination(
     plan: _PublicationPlan,
     qualification_bytes: bytes | None,
     baseline: SourceBaseline | None = None,
-) -> None:
+) -> _Replacements:
+    """Reject destination conflicts and return the artifacts that match the source baseline."""
     target_spec_is_valid = _program_spec_is_valid(task_dir / "program_0")
+    replaceable_files: set[Path] = set()
     for relative in plan.files:
         source = staged_task_dir / relative
         target = task_dir / relative
@@ -529,6 +541,7 @@ def _preflight_destination(
         if relative == _PROGRAM_SPEC_PATH and not target_spec_is_valid:
             continue
         if baseline is not None and baseline.matches_file(target, relative):
+            replaceable_files.add(relative)
             continue
         raise TaskPublicationError(
             f"existing task artifact differs from accepted scaffold: {relative.as_posix()}"
@@ -546,10 +559,12 @@ def _preflight_destination(
         task_dir / _QUALIFICATION_PATH
     ).is_symlink():
         raise TaskPublicationError("task destination contains a stale qualification receipt")
+    replaceable = _Replacements(files=frozenset(replaceable_files), resources=False)
     if plan.resources is not None and (task_dir / plan.resources).exists():
         if baseline is not None and baseline.matches_resources(task_dir / plan.resources):
-            return
+            return dataclasses.replace(replaceable, resources=True)
         require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
+    return replaceable
 
 
 def _program_spec_is_valid(program_dir: Path) -> bool:
