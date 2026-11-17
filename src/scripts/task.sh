@@ -432,7 +432,7 @@ from pathlib import Path
 
 sys.path.insert(0, sys.argv[1])
 
-from src.task_drafting.publication import record_task_source_baseline
+from src.task_drafting.source_baseline import record_task_source_baseline
 
 record_task_source_baseline(Path(sys.argv[2]), Path(sys.argv[3]))
 PY

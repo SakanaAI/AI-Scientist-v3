@@ -23,6 +23,9 @@ class TaskPublicationDeadlineExceeded(TaskPublicationError):
     """Raised when a bounded publication traversal exhausts its deadline."""
 
 
+RESOURCE_MANIFEST = ".agentic_resource_manifest.json"
+
+
 def real_path(path: Path, role: str) -> Path:
     absolute = Path(os.path.abspath(path))
     current = Path(absolute.anchor)

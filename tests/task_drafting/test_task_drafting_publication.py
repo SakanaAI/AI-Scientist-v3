@@ -27,7 +27,7 @@ from src.investigation.task_alignment import (
 from src.investigation.task_contract import load_task_contract
 from src.investigation.task_setup import run_task_setup
 from src.investigation.task_shadow import create_sealed_task_shadow
-from src.task_drafting import publication, publication_fs
+from src.task_drafting import publication, publication_fs, source_baseline
 from src.task_drafting.agent_failure import (
     AgentFailureKind,
     classify_agent_failure_log,
@@ -300,7 +300,7 @@ def _make_predrafted_fx(root: Path) -> tuple[_Publication, Path]:
     shutil.rmtree(fx.task_dir)
     shutil.copytree(fx.staged_task_dir, fx.task_dir)
     baseline = fx.output_dir / "task_source_baseline.json"
-    publication.record_task_source_baseline(fx.task_dir, baseline)
+    source_baseline.record_task_source_baseline(fx.task_dir, baseline)
     # Alignment repair edits only the staged copy.
     (fx.staged_task_dir / "evaluate.py").write_text("SEARCH = 'repaired'\n", encoding="utf-8")
     resource = fx.staged_task_dir / "resources/search/dev.json"
@@ -359,10 +359,10 @@ def test_publish_task_scaffold_replaces_predrafted_source_only_when_it_matches_b
     (task_dir / "task.md").write_text("# one\n", encoding="utf-8")
     (task_dir / "link.md").symlink_to(task_dir / "task.md")
     record = tmp_path / "record.json"
-    publication.record_task_source_baseline(task_dir, record)
+    source_baseline.record_task_source_baseline(task_dir, record)
     first = record.read_bytes()
     (task_dir / "task.md").write_text("# two\n", encoding="utf-8")
-    publication.record_task_source_baseline(task_dir, record)
+    source_baseline.record_task_source_baseline(task_dir, record)
     assert record.read_bytes() == first
     payload = json.loads(first)
     assert set(payload["files"]) == {"task.md"}
