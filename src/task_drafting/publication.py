@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import secrets
-import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,8 +15,6 @@ from src.task_drafting.publication_fs import (
     atomic_write as _atomic_write,
     file_sha256 as _file_sha256,
     fsync_directory as _fsync_directory,
-    fsync_tree as _fsync_tree,
-    open_absolute_directory as _open_absolute_directory,
     read_regular_bytes as _read_regular_bytes,
     real_path as _real_path,
     regular_file_identity as _regular_file_identity,
@@ -29,6 +24,10 @@ from src.task_drafting.publication_fs import (
     same_file_bytes as _same_file_bytes,
     unlink_regular_file_if_identity as _unlink_regular_file_if_identity,
     validate_tree as _validate_tree,
+)
+from src.task_drafting.publication_resources import (
+    publish_resources,
+    require_managed_resource_digest,
 )
 from src.task_drafting.source_baseline import (
     REPLACED_SOURCE_DIRNAME,
@@ -189,7 +188,7 @@ def publish_task_scaffold(
         else:
             _publish_regular_file(source, target)
     if plan.resources is not None:
-        _publish_resources(
+        publish_resources(
             staged_task_dir / plan.resources,
             task_dir / plan.resources,
             max_runtime_bytes=max_runtime_bytes,
@@ -539,7 +538,7 @@ def _preflight_destination(
     if plan.resources is not None and (task_dir / plan.resources).exists():
         if baseline is not None and baseline.matches_resources(task_dir / plan.resources):
             return
-        _require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
+        require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
 
 
 def _program_spec_is_valid(program_dir: Path) -> bool:
@@ -612,7 +611,7 @@ def _validate_published_plan(task_dir: Path, plan: _PublicationPlan) -> None:
                 f"published artifact differs from publication plan: {relative.as_posix()}"
             )
     if plan.resources is not None:
-        _require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
+        require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
 
 
 def _bytes_match(path: Path, expected: bytes) -> bool:
@@ -666,105 +665,6 @@ def _publish_replaceable_bytes(content: bytes, target: Path) -> None:
         target, maximum_bytes=len(content) + 1
     ) != content:
         _atomic_write(target, content, replace_existing=True)
-
-
-def _publish_resources(
-    source: Path,
-    target: Path,
-    *,
-    max_runtime_bytes: int,
-    expected_sha256: str | None,
-    replaceable: bool = False,
-) -> None:
-    _validate_tree(source)
-    if (source / _RESOURCE_MANIFEST).exists():
-        raise TaskPublicationError("drafted resources contain a harness-owned manifest")
-    total_bytes = sum(path.stat().st_size for path in _regular_tree_files(source))
-    if total_bytes > max_runtime_bytes:
-        raise TaskPublicationError(
-            f"drafted runtime resources exceed configured limit ({max_runtime_bytes} bytes): {source}"
-        )
-    if target.exists() and not replaceable:
-        _require_matching_managed_resources(source, target)
-        return
-    parent_fd = _open_absolute_directory(target.parent)
-    replaced_name: str | None = None
-    if target.exists():
-        # The existing tree still holds the pre-drafting source resources; move it
-        # aside so the accepted tree can take its place, and restore it on failure.
-        replaced_name = f".{target.name}.replaced-{secrets.token_hex(12)}"
-        os.rename(target.name, replaced_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-    temporary_name = f".{target.name}.publish-{secrets.token_hex(12)}"
-    os.mkdir(temporary_name, 0o700, dir_fd=parent_fd)
-    temporary = (Path(f"/proc/self/fd/{parent_fd}") / temporary_name).resolve(strict=True)
-    published = False
-    try:
-        shutil.copytree(source, temporary, dirs_exist_ok=True, symlinks=True)
-        _validate_tree(temporary)
-        resource_digest = resource_tree_digest(temporary, _RESOURCE_MANIFEST)
-        if resource_digest != expected_sha256:
-            raise TaskPublicationError("drafted resources changed during publication")
-        manifest = {
-            "managed_by": "agentic-scientist-task-drafting",
-            "schema_version": 1,
-            "sha256": resource_digest,
-        }
-        _atomic_write(
-            temporary / _RESOURCE_MANIFEST,
-            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
-        )
-        _fsync_tree(temporary)
-        try:
-            os.replace(
-                temporary_name,
-                target.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-            )
-            os.fsync(parent_fd)
-        except OSError:
-            if not target.exists():
-                raise
-            _require_matching_managed_resources(source, target)
-        published = True
-    finally:
-        if temporary.exists():
-            shutil.rmtree(temporary)
-        if replaced_name is not None:
-            if published:
-                shutil.rmtree(Path(f"/proc/self/fd/{parent_fd}") / replaced_name)
-            elif not target.exists():
-                os.rename(replaced_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-            os.fsync(parent_fd)
-        os.close(parent_fd)
-
-
-def _require_matching_managed_resources(source: Path, target: Path) -> None:
-    _require_managed_resource_digest(
-        target,
-        resource_tree_digest(source, _RESOURCE_MANIFEST),
-    )
-
-
-def _require_managed_resource_digest(target: Path, expected_sha256: str | None) -> None:
-    _validate_tree(target)
-    manifest_path = target / _RESOURCE_MANIFEST
-    try:
-        manifest = json.loads(
-            _read_regular_bytes(
-                manifest_path,
-                maximum_bytes=_RUNTIME_FILE_MAX_BYTES,
-            ).decode("utf-8")
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise TaskPublicationError(f"invalid managed task resources: {target}") from exc
-    target_digest = resource_tree_digest(target, _RESOURCE_MANIFEST)
-    if manifest != {
-        "managed_by": "agentic-scientist-task-drafting",
-        "schema_version": 1,
-        "sha256": target_digest,
-    } or target_digest != expected_sha256:
-        raise TaskPublicationError("drafted resources differ from existing managed task resources")
 
 
 def _validate_destination(task_dir: Path, report_path: Path) -> None:
