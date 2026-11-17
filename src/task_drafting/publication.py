@@ -19,6 +19,7 @@ from src.task_drafting.publication_fs import (
     real_path as _real_path,
     regular_file_identity as _regular_file_identity,
     regular_tree_files as _regular_tree_files,
+    replace_verified_file as _replace_verified_file,
     RESOURCE_MANIFEST as _RESOURCE_MANIFEST,
     resource_tree_digest,
     same_file_bytes as _same_file_bytes,
@@ -34,7 +35,6 @@ from src.task_drafting.source_baseline import (
     REPLACED_SOURCE_DIRNAME,
     SourceBaseline,
     load_source_baseline,
-    save_replaced_originals,
 )
 from src.task_drafting.qualification import (
     TaskQualificationError,
@@ -124,9 +124,10 @@ def publish_task_scaffold(
     ``source_baseline_path`` points at the record written by
     :func:`record_task_source_baseline` when the task was staged. Destination
     artifacts that still match it are replaced by the accepted scaffold; without it,
-    any differing destination artifact aborts publication. The replaced originals are
-    copied to ``output_dir/replaced_task_source`` first, and their task-relative paths
-    are returned.
+    any differing destination artifact aborts publication. Each original is checked
+    against the baseline again after it is moved aside and copied to
+    ``output_dir/replaced_task_source`` before it is replaced; the task-relative paths
+    of the replaced originals are returned.
     """
     task_dir, staged_task_dir, output_dir, alignment_report_path = _validated_roots(
         task_dir, staged_task_dir, output_dir, alignment_report_path
@@ -166,23 +167,21 @@ def publish_task_scaffold(
         qualification_bytes,
         baseline,
     )
-    replaced: tuple[str, ...] = ()
-    if baseline is not None:
-        replaced = save_replaced_originals(
-            baseline,
-            task_dir=task_dir,
-            staged_task_dir=staged_task_dir,
-            files=plan.files,
-            resources=plan.resources,
-            backup_dir=output_dir / REPLACED_SOURCE_DIRNAME,
-        )
     _publish_bytes(plan.manifest, task_dir / _PUBLICATION_PATH)
 
+    backup_dir = output_dir / REPLACED_SOURCE_DIRNAME
+    replaced: list[str] = []
     for relative in plan.files:
         source = staged_task_dir / relative
         target = task_dir / relative
         if baseline is not None and baseline.matches_file(target, relative):
-            _replace_regular_file(source, target)
+            if _replace_verified_file(
+                source,
+                target,
+                baseline_sha256=baseline.file_sha256[relative.as_posix()],
+                backup=backup_dir / relative,
+            ):
+                replaced.append(relative.as_posix())
         elif relative == _PROGRAM_SPEC_PATH:
             _publish_program_spec(source, target)
         else:
@@ -191,12 +190,16 @@ def publish_task_scaffold(
         source = staged_task_dir / plan.resources
         target = task_dir / plan.resources
         if baseline is not None and baseline.matches_resources(target):
-            replace_resources(
+            assert baseline.resources_sha256 is not None
+            if replace_resources(
                 source,
                 target,
                 max_runtime_bytes=max_runtime_bytes,
                 expected_sha256=plan.resource_sha256,
-            )
+                baseline_sha256=baseline.resources_sha256,
+                backup=backup_dir / plan.resources,
+            ):
+                replaced.append(f"{plan.resources.as_posix()}/")
         else:
             publish_resources(
                 source,
@@ -225,7 +228,7 @@ def publish_task_scaffold(
     except BaseException:
         _unlink_regular_file_if_identity(marker_path, marker_identity)
         raise
-    return replaced
+    return tuple(replaced)
 
 
 def task_publication_plan_sha256(
@@ -644,11 +647,6 @@ def _publish_regular_file(source: Path, target: Path) -> None:
             return
         raise TaskPublicationError(f"existing task artifact differs from accepted scaffold: {target}")
     _atomic_copy(source, target)
-
-
-def _replace_regular_file(source: Path, target: Path) -> None:
-    if not _same_file_bytes(source, target):
-        _atomic_copy(source, target, replace_existing=True)
 
 
 def _publish_program_spec(source: Path, target: Path) -> None:

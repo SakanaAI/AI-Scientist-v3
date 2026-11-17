@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from src.investigation.task_alignment import load_task_alignment_report
-from src.task_drafting import publication, publication_resources, source_baseline
+from src.task_drafting import publication, publication_fs, publication_resources, source_baseline
 from tests.task_drafting.test_task_drafting_publication import _make_fx, _Publication, _sha256
 
 REPAIRED_EVALUATOR = "SEARCH = 'repaired'\n"
@@ -196,6 +196,51 @@ def test_unrestorable_source_resources_are_reported(
         for path in sorted(kept.rglob("*"))
         if path.is_file()
     } == original
+
+
+def test_source_file_edited_during_publication_aborts_and_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    evaluator = fx.task_dir / "evaluate.py"
+    real_move_aside = publication_fs.move_aside
+
+    def move_aside_after_user_edit(parent_fd: int, name: str) -> str | None:
+        if name == evaluator.name:
+            evaluator.write_text("SEARCH = 'user edit'\n", encoding="utf-8")
+        return real_move_aside(parent_fd, name)
+
+    monkeypatch.setattr(publication_fs, "move_aside", move_aside_after_user_edit)
+
+    with pytest.raises(publication.TaskPublicationError, match="changed during publication"):
+        fx.publish(source_baseline_path=baseline)
+
+    assert evaluator.read_text(encoding="utf-8") == "SEARCH = 'user edit'\n"
+    assert not (fx.output_dir / source_baseline.REPLACED_SOURCE_DIRNAME / "evaluate.py").exists()
+    assert not any(path.name.startswith(".evaluate.py.") for path in fx.task_dir.iterdir())
+    assert not fx.marker.exists()
+
+
+def test_resource_added_during_publication_aborts_and_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    original = _resource_files(fx.task_dir)
+    real_move_aside = publication_resources.move_aside
+
+    def move_aside_after_user_edit(parent_fd: int, name: str) -> str | None:
+        (fx.task_dir / "resources/final/extra.json").write_text("{}\n", encoding="utf-8")
+        return real_move_aside(parent_fd, name)
+
+    monkeypatch.setattr(publication_resources, "move_aside", move_aside_after_user_edit)
+
+    with pytest.raises(publication.TaskPublicationError, match="resources changed during publication"):
+        fx.publish(source_baseline_path=baseline)
+
+    assert _resource_files(fx.task_dir) == {**original, "final/extra.json": b"{}\n"}
+    assert _hidden_resource_trees(fx.task_dir) == []
+    assert not (fx.output_dir / source_baseline.REPLACED_SOURCE_DIRNAME / "resources").exists()
+    assert not fx.marker.exists()
 
 
 def test_invalid_baseline_is_rejected(tmp_path: Path) -> None:
