@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import logging
 import os
 import secrets
 import stat
@@ -13,6 +15,7 @@ from pathlib import Path
 TREE_MAX_DEPTH = 64
 TREE_MAX_ENTRIES = 100_000
 FileIdentity = tuple[int, int]
+_logger = logging.getLogger(__name__)
 
 
 class TaskPublicationError(ValueError):
@@ -406,17 +409,28 @@ def replace_verified_file(source: Path, target: Path, *, baseline_sha256: str, b
         try:
             atomic_copy(target.with_name(aside_name), backup, replace_existing=True)
             if file_sha256(backup) != baseline_sha256:
-                backup.unlink()
                 raise TaskPublicationError(f"task artifact changed during publication: {target}")
             atomic_copy(source, target)
         except BaseException as exc:
+            # The original goes back in place, so its backup would be misleading.
+            with contextlib.suppress(OSError):
+                backup.unlink(missing_ok=True)
             restore_aside(parent_fd, aside_name, target, exc)
             raise
-        os.unlink(aside_name, dir_fd=parent_fd)
-        os.fsync(parent_fd)
+        _discard_aside_file(parent_fd, aside_name, target)
         return True
     finally:
         os.close(parent_fd)
+
+
+def _discard_aside_file(parent_fd: int, aside_name: str, target: Path) -> None:
+    try:
+        os.unlink(aside_name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except OSError as exc:
+        _logger.warning(
+            "could not remove replaced task artifact at %s: %s", target.with_name(aside_name), exc
+        )
 
 
 def _publish_temporary(

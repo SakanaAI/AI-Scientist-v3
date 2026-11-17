@@ -69,6 +69,7 @@ def replace_resources(
         if aside_name is None:
             raise TaskPublicationError(f"task resources disappeared during publication: {target}")
         aside = target.with_name(aside_name)
+        backed_up = False
         try:
             backed_up = _keep_verified_original(
                 aside,
@@ -77,6 +78,9 @@ def replace_resources(
             )
             _install_tree(source, target, parent_fd, expected_sha256=expected_sha256)
         except BaseException as exc:
+            if backed_up:
+                # The original goes back in place, so a retry must be able to back it up again.
+                shutil.rmtree(backup, ignore_errors=True)
             restore_aside(parent_fd, aside_name, target, exc)
             raise
         _discard_aside(aside)

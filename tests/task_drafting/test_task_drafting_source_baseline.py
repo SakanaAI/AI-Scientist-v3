@@ -215,6 +215,50 @@ def test_unrestorable_source_resources_are_reported(
     } == original
 
 
+def test_publication_retries_after_a_failed_resource_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    original = _resource_files(fx.task_dir)
+    real_install = publication_resources._install_tree
+
+    def failing_install(*args, **kwargs):
+        raise publication.TaskPublicationError("install failed")
+
+    monkeypatch.setattr(publication_resources, "_install_tree", failing_install)
+    with pytest.raises(publication.TaskPublicationError, match="install failed"):
+        fx.publish(source_baseline_path=baseline)
+    assert _resource_files(fx.task_dir) == original
+    assert not (fx.output_dir / source_baseline.REPLACED_SOURCE_DIRNAME / "resources").exists()
+
+    monkeypatch.setattr(publication_resources, "_install_tree", real_install)
+    replaced = fx.publish(source_baseline_path=baseline)
+
+    assert "resources/" in replaced
+    assert fx.marker.is_file()
+
+
+def test_unremovable_replaced_file_does_not_fail_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    real_unlink = os.unlink
+
+    def unlink_refusing_replaced(path, *args, **kwargs):
+        if str(path).startswith(".evaluate.py.replaced-"):
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication_fs.os, "unlink", unlink_refusing_replaced)
+
+    with caplog.at_level(logging.WARNING, logger=publication_fs.__name__):
+        replaced = fx.publish(source_baseline_path=baseline)
+
+    assert "evaluate.py" in replaced
+    assert fx.marker.is_file()
+    assert "could not remove replaced task artifact" in caplog.text
+
+
 def test_source_file_edited_during_publication_aborts_and_is_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
