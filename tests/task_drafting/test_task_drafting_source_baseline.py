@@ -79,6 +79,23 @@ def test_replaced_originals_are_saved_in_the_drafting_output(tmp_path: Path) -> 
     } == original_resources
 
 
+def test_invalid_program_spec_matching_baseline_is_saved_before_replacement(tmp_path: Path) -> None:
+    fx = _make_fx(tmp_path)
+    shutil.rmtree(fx.task_dir)
+    shutil.copytree(fx.staged_task_dir, fx.task_dir)
+    spec = fx.task_dir / "program_0/program_spec.toml"
+    spec.write_text("[[broken\n", encoding="utf-8")
+    baseline = fx.output_dir / "task_source_baseline.json"
+    source_baseline.record_task_source_baseline(fx.task_dir, baseline)
+
+    replaced = fx.publish(source_baseline_path=baseline)
+
+    saved = fx.output_dir / source_baseline.REPLACED_SOURCE_DIRNAME / "program_0/program_spec.toml"
+    assert replaced == ("program_0/program_spec.toml",)
+    assert saved.read_text(encoding="utf-8") == "[[broken\n"
+    assert spec.read_bytes() == (fx.staged_task_dir / "program_0/program_spec.toml").read_bytes()
+
+
 def test_publication_without_replacements_saves_nothing(tmp_path: Path) -> None:
     fx = _make_fx(tmp_path)
     baseline = fx.output_dir / "task_source_baseline.json"

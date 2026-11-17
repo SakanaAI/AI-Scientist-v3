@@ -538,10 +538,10 @@ def _preflight_destination(
         _reject_symlink_components(target, task_dir)
         if not target.exists() or _same_file_bytes(source, target):
             continue
-        if relative == _PROGRAM_SPEC_PATH and not target_spec_is_valid:
-            continue
         if baseline is not None and baseline.matches_file(target, relative):
             replaceable_files.add(relative)
+            continue
+        if relative == _PROGRAM_SPEC_PATH and not target_spec_is_valid:
             continue
         raise TaskPublicationError(
             f"existing task artifact differs from accepted scaffold: {relative.as_posix()}"
