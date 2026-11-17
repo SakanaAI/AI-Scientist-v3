@@ -267,6 +267,7 @@ Write for a reader who will skim the abstract, look at the figures, and read the
 6. State an unverified mechanism in at most one sentence, explicitly labeled as a hypothesis, or omit it. Do not narrate work that was not done ("we have not verified", "we did not profile", "was not inspected") in Results; state each such gap once, in Limitations.
 7. Summarize unreplicated exploratory runs in one or two sentences in the main text; give their details in Supplementary Information.
 8. Report measured outcomes only. Do not compare results against pre-run expectations, recorded variant hypotheses, or specification estimates; these are internal planning artifacts, not findings.
+9. Keep the search process out of results prose and captions: search-time scores of selected configurations, counts of runs explored or unscored, and which configuration each exploratory run started from belong only in the experimental protocol and Supplementary Information.
 
 ## Consistency
 1. Match numeric precision to the measured uncertainty. In prose, round differences to about one digit beyond the noise scale (for example 0.009 rather than 0.0095 when the run-to-run spread is about 0.001); full precision belongs in tables.
