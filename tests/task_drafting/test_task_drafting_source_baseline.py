@@ -1,7 +1,9 @@
 """Publishing a repaired scaffold over a task that already shipped one (source baseline)."""
 from __future__ import annotations
 
+import errno
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -9,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from src.investigation.task_alignment import load_task_alignment_report
-from src.task_drafting import publication, source_baseline
+from src.task_drafting import publication, publication_resources, source_baseline
 from tests.task_drafting.test_task_drafting_publication import _make_fx, _Publication, _sha256
 
 REPAIRED_EVALUATOR = "SEARCH = 'repaired'\n"
@@ -115,6 +117,85 @@ def test_resource_added_after_baseline_aborts_and_is_kept(tmp_path: Path) -> Non
         fx.publish(source_baseline_path=baseline)
 
     assert (fx.task_dir / "resources/final/extra.json").is_file()
+
+
+def _resource_files(task_dir: Path) -> dict[str, bytes]:
+    root = task_dir / "resources"
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _hidden_resource_trees(task_dir: Path) -> list[Path]:
+    return [path for path in task_dir.iterdir() if path.name.startswith(".resources.")]
+
+
+def test_failed_resource_install_restores_source_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    original = _resource_files(fx.task_dir)
+    real_mkdir = os.mkdir
+
+    def mkdir_without_space(path, *args, **kwargs):
+        if str(path).startswith(".resources.publish-"):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication_resources.os, "mkdir", mkdir_without_space)
+
+    with pytest.raises(OSError, match="No space left"):
+        fx.publish(source_baseline_path=baseline)
+
+    assert _resource_files(fx.task_dir) == original
+    assert _hidden_resource_trees(fx.task_dir) == []
+
+
+def test_unremovable_replaced_resources_do_not_fail_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    real_rmtree = shutil.rmtree
+
+    def rmtree_refusing_replaced(path, *args, **kwargs):
+        if Path(path).name.startswith(".resources.replaced-"):
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication_resources.shutil, "rmtree", rmtree_refusing_replaced)
+
+    with caplog.at_level(logging.WARNING, logger=publication_resources.__name__):
+        fx.publish(source_baseline_path=baseline)
+
+    assert fx.marker.is_file()
+    assert "could not remove replaced task resources" in caplog.text
+
+
+def test_unrestorable_source_resources_are_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    original = _resource_files(fx.task_dir)
+
+    def install_racing_with_user(source, target, parent_fd, *, expected_sha256):
+        target.mkdir()
+        (target / "user.json").write_text("{}\n", encoding="utf-8")
+        raise publication.TaskPublicationError("install failed")
+
+    monkeypatch.setattr(publication_resources, "_install_tree", install_racing_with_user)
+
+    with pytest.raises(publication.TaskPublicationError, match="install failed") as caught:
+        fx.publish(source_baseline_path=baseline)
+
+    [kept] = _hidden_resource_trees(fx.task_dir)
+    assert str(kept) in "\n".join(caught.value.__notes__)
+    assert {
+        path.relative_to(kept).as_posix(): path.read_bytes()
+        for path in sorted(kept.rglob("*"))
+        if path.is_file()
+    } == original
 
 
 def test_invalid_baseline_is_rejected(tmp_path: Path) -> None:

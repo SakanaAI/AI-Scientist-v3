@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -21,6 +22,7 @@ from src.task_drafting.publication_fs import (
 )
 
 _MANIFEST_MAX_BYTES = 1024 * 1024
+_logger = logging.getLogger(__name__)
 
 
 def publish_resources(
@@ -63,16 +65,59 @@ def _validate_staged_resources(source: Path, *, max_runtime_bytes: int) -> None:
 
 def _replace_tree(source: Path, target: Path, *, expected_sha256: str | None) -> None:
     parent_fd = open_absolute_directory(target.parent)
-    replaced_name: str | None = None
-    if target.exists():
-        # The existing tree still holds the pre-drafting source resources; move it
+    try:
+        # An existing tree still holds the pre-drafting source resources; move it
         # aside so the accepted tree can take its place, and restore it on failure.
-        replaced_name = f".{target.name}.replaced-{secrets.token_hex(12)}"
-        os.rename(target.name, replaced_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        aside_name = _move_aside(parent_fd, target.name)
+        try:
+            _install_tree(source, target, parent_fd, expected_sha256=expected_sha256)
+        except BaseException as exc:
+            if aside_name is not None:
+                _restore_aside(parent_fd, aside_name, target, exc)
+            raise
+        if aside_name is not None:
+            _discard_aside(target.with_name(aside_name))
+    finally:
+        os.close(parent_fd)
+
+
+def _move_aside(parent_fd: int, name: str) -> str | None:
+    aside_name = f".{name}.replaced-{secrets.token_hex(12)}"
+    try:
+        os.rename(name, aside_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    except FileNotFoundError:
+        return None
+    return aside_name
+
+
+def _restore_aside(parent_fd: int, aside_name: str, target: Path, failure: BaseException) -> None:
+    try:
+        os.rename(aside_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except OSError as exc:
+        failure.add_note(
+            f"original task resources were kept at {target.with_name(aside_name)} "
+            f"because {target} could not be restored: {exc}"
+        )
+
+
+def _discard_aside(aside: Path) -> None:
+    try:
+        shutil.rmtree(aside)
+    except OSError as exc:
+        _logger.warning("could not remove replaced task resources at %s: %s", aside, exc)
+
+
+def _install_tree(
+    source: Path,
+    target: Path,
+    parent_fd: int,
+    *,
+    expected_sha256: str | None,
+) -> None:
     temporary_name = f".{target.name}.publish-{secrets.token_hex(12)}"
     os.mkdir(temporary_name, 0o700, dir_fd=parent_fd)
     temporary = (Path(f"/proc/self/fd/{parent_fd}") / temporary_name).resolve(strict=True)
-    published = False
     try:
         shutil.copytree(source, temporary, dirs_exist_ok=True, symlinks=True)
         validate_tree(temporary)
@@ -101,17 +146,9 @@ def _replace_tree(source: Path, target: Path, *, expected_sha256: str | None) ->
             if not target.exists():
                 raise
             require_matching_managed_resources(source, target)
-        published = True
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
-        if replaced_name is not None:
-            if published:
-                shutil.rmtree(Path(f"/proc/self/fd/{parent_fd}") / replaced_name)
-            elif not target.exists():
-                os.rename(replaced_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-            os.fsync(parent_fd)
-        os.close(parent_fd)
 
 
 def require_matching_managed_resources(source: Path, target: Path) -> None:
