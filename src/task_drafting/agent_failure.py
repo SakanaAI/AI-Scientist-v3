@@ -22,6 +22,14 @@ _TRANSIENT_PATTERNS = (
     re.compile(r"\bconnection (?:reset|closed) by peer\b", re.IGNORECASE),
     re.compile(r"\b(?:request|connection) timed out\b.{0,80}\b(?:model|provider|upstream)\b", re.IGNORECASE),
     re.compile(r"\b(?:model|provider|upstream)\b.{0,80}\brequest timed out\b", re.IGNORECASE),
+    # Host network loss while the agent CLI talks to its provider (issue #2).
+    re.compile(r"\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b"),
+    re.compile(r"\bAPIConnectionError\b"),
+    re.compile(r"\bAPI Error\b.{0,40}\b(?:connection error|request timed out)", re.IGNORECASE),
+    re.compile(r"\btemporary failure in name resolution\b", re.IGNORECASE),
+    re.compile(r"\bstream disconnected before completion\b", re.IGNORECASE),
+    re.compile(r"\bsocket hang up\b", re.IGNORECASE),
+    re.compile(r"\bTypeError: fetch failed\b"),
 )
 _PERMANENT_PATTERNS = (
     re.compile(r"\binvalid (?:api key|token|credentials)\b", re.IGNORECASE),

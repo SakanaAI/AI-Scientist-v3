@@ -630,6 +630,16 @@ _TRANSIENT_MESSAGES = [
     "connection reset by peer",
     "request timed out while contacting the model provider",
     "the model provider request timed out",
+    "API Error: Connection error.",
+    "API Error (Request timed out.)",
+    "APIConnectionError: Connection error.",
+    "Error: getaddrinfo ENOTFOUND api.anthropic.com",
+    "connect ECONNREFUSED 127.0.0.1:443",
+    "read ETIMEDOUT",
+    "Temporary failure in name resolution",
+    "stream disconnected before completion: error sending request",
+    "Error: socket hang up",
+    "TypeError: fetch failed",
 ]
 
 _NON_TRANSIENT_MESSAGES = [
@@ -637,6 +647,7 @@ _NON_TRANSIENT_MESSAGES = [
     ("permission-denied", "permission denied"),
     ("no-edit", "agent completed without editing the task"),
     ("incidental-429", "the report discusses HTTP 429 handling"),
+    ("incidental-network", "the evaluator reports a network error when offline"),
     ("empty", ""),
     ("permanent-wins-over-stale-transient", "rate limit exceeded\ninvalid API key"),
     (
