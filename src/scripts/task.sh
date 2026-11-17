@@ -1223,6 +1223,10 @@ draft_scaffold_until_complete() {
   local active_prompt="$PROMPT"
   local attempt_started_at
   local attempt_label
+  # A retained scaffold is complete before the agent runs, so completeness alone
+  # cannot show that a required revision landed; only a successful agent run can.
+  local revision_pending=0
+  local revision_diagnostic="The accepted task design was produced again by this draft. Update the retained scaffold to implement it."
 
   if [ "${RESUMED_DRAFT:-0}" -eq 1 ]; then
     set +e
@@ -1235,8 +1239,9 @@ draft_scaffold_until_complete() {
         return 0
       fi
       # The design was produced again, so the retained scaffold may not match it.
+      revision_pending=1
       inspection_exit=3
-      diagnostic="MISSING:The accepted task design was produced again by this draft. Update the retained scaffold to implement it."
+      diagnostic="MISSING:$revision_diagnostic"
     fi
     if [ "$inspection_exit" -ne 3 ]; then
       printf '%s\n' "$diagnostic" >&2
@@ -1260,6 +1265,16 @@ draft_scaffold_until_complete() {
     diagnostic="$(inspect_staged_scaffold 2>&1)"
     inspection_exit=$?
     set -e
+    if [ "$revision_pending" -eq 1 ]; then
+      if [ "$agent_exit" -eq 0 ]; then
+        revision_pending=0
+      elif [ "$inspection_exit" -eq 0 ]; then
+        inspection_exit=3
+        diagnostic="MISSING:$revision_diagnostic"
+      elif [ "$inspection_exit" -eq 3 ]; then
+        diagnostic="$diagnostic"$'\n'"$revision_diagnostic"
+      fi
+    fi
     if [ "$inspection_exit" -eq 0 ]; then
       if [ "$agent_exit" -ne 0 ]; then
         echo "[task.sh] draft agent exited $agent_exit; using complete retained scaffold" >&2

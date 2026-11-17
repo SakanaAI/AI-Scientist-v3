@@ -73,3 +73,32 @@ def test_resume_is_refused_after_the_task_changes(tmp_path: Path) -> None:
     resumed = _draft(tmp_path, "draft_2", "--resume-from", "latest")
     assert resumed.returncode == 1
     assert "Cannot resume task draft: task source changed" in resumed.stderr
+
+
+def _fail_scaffold_agent(root: Path) -> None:
+    headless = root / "bin" / "headless"
+    headless.rename(root / "bin" / "headless-real")
+    headless.write_text(
+        '#!/bin/bash\n'
+        'if [ "${TASK_AGENT_PHASE:-}" = "draft" ]; then echo "scaffold agent crashed" >&2; exit 1; fi\n'
+        'exec "$(dirname "$0")/headless-real" "$@"\n',
+        encoding="utf-8",
+    )
+    headless.chmod(0o755)
+
+
+def test_failed_scaffold_revision_does_not_accept_the_stale_scaffold(tmp_path: Path) -> None:
+    _write_task_md_only(tmp_path)
+    (tmp_path / "drafts").mkdir()
+    failed = _draft(tmp_path, "draft_1", FAKE_TASK_SEARCH_SMOKE_FAIL="1")
+    assert failed.returncode != 0
+    (tmp_path / "drafts" / "draft_1" / "_task_design" / "design_receipt.json").write_text("{}", encoding="utf-8")
+    _fail_scaffold_agent(tmp_path)
+
+    resumed = _draft(tmp_path, "draft_2", "--resume-from", "latest", "--draft-max-attempts", "1")
+    output = resumed.stdout + resumed.stderr
+    assert resumed.returncode == 3, output
+    assert "(accepted design: rerun)" in output
+    assert "using complete retained scaffold" not in output
+    assert "Task scaffold remained incomplete after 1 draft attempt(s)" in output
+    assert not (tmp_path / "task" / "evaluate.py").exists()
