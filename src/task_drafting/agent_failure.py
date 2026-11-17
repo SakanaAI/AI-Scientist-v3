@@ -31,6 +31,8 @@ _TRANSIENT_PATTERNS = (
     re.compile(r"\bsocket hang up\b", re.IGNORECASE),
     re.compile(r"\bTypeError: fetch failed\b"),
 )
+# Claude stream-json user/assistant turns and Codex item events carry tool output and prose.
+_TRANSCRIPT_EVENT_TYPES = frozenset({"user", "assistant", "item.started", "item.updated", "item.completed"})
 _PERMANENT_PATTERNS = (
     re.compile(r"\binvalid (?:api key|token|credentials)\b", re.IGNORECASE),
     re.compile(r"\b(?:authentication failed|unauthorized|forbidden)\b", re.IGNORECASE),
@@ -48,7 +50,8 @@ class AgentFailureKind(str, Enum):
 
 def classify_agent_failure_text(text: str) -> AgentFailureKind:
     """Classify bounded agent output without returning its contents."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()][-32:]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [line for line in lines if not _is_transcript_event(line)][-32:]
     structured_error = _last_structured_error(lines)
     candidates = [structured_error] if structured_error is not None else reversed(lines)
     for candidate in candidates:
@@ -62,17 +65,29 @@ def classify_agent_failure_text(text: str) -> AgentFailureKind:
     return AgentFailureKind.NON_RETRYABLE
 
 
+def _json_event(line: str) -> dict[str, object] | None:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _is_transcript_event(line: str) -> bool:
+    """Agent prose and tool output, which may quote errors that are not the agent's own."""
+    event = _json_event(line)
+    return event is not None and event.get("type") in _TRANSCRIPT_EVENT_TYPES
+
+
 def _last_structured_error(lines: list[str]) -> str | None:
     for line in reversed(lines):
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
+        event = _json_event(line)
+        if event is None or event.get("type") not in {"error", "turn.failed"}:
             continue
-        if not isinstance(payload, dict) or payload.get("type") not in {"error", "turn.failed"}:
-            continue
-        message = payload.get("message")
-        if payload.get("type") == "turn.failed" and isinstance(payload.get("error"), dict):
-            message = payload["error"].get("message")
+        message = event.get("message")
+        error = event.get("error")
+        if event.get("type") == "turn.failed" and isinstance(error, dict):
+            message = error.get("message")
         if isinstance(message, str):
             return message
     return None
