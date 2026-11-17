@@ -58,17 +58,28 @@ def _uses_agent_skill_path(path: Path) -> bool:
 
 
 def _is_approved_latex_system_input(input_path: Path) -> bool:
+    """Accept a TeX system input whose real path stays inside any approved root.
+
+    Distributions alias one approved root into another (Debian/Ubuntu ship
+    ``/usr/share/texmf/web2c/texmf.cnf`` as a symlink into
+    ``/usr/share/texlive/texmf-dist``), so a resolved input is checked against
+    every approved root rather than only the first one it lexically matches.
+    """
+    if not any(input_path.is_relative_to(root) for root in LATEX_SYSTEM_INPUT_ROOTS):
+        return False
+    if not input_path.exists():
+        return True
+    try:
+        resolved_input = input_path.resolve(strict=True)
+    except OSError:
+        return False
     for system_root in LATEX_SYSTEM_INPUT_ROOTS:
-        if not input_path.is_relative_to(system_root):
-            continue
-        if not input_path.exists():
-            return True
         try:
-            resolved_input = input_path.resolve(strict=True)
             resolved_root = system_root.resolve(strict=True)
         except OSError:
-            return False
-        return resolved_input.is_relative_to(resolved_root)
+            continue
+        if resolved_input.is_relative_to(resolved_root):
+            return True
     return False
 
 
