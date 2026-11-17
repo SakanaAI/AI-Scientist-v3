@@ -248,6 +248,34 @@ Before writing the abstract, privately sketch the broad context, the concrete se
 12. Keep the paper self-contained so a reader can understand the problem, approach, and findings without knowing anything about the underlying agent pipeline.
 13. Before finalizing, scan the manuscript text and remove any residual wording that exposes the run structure rather than the scientific story.
 
+# Writing Style
+Write for a reader who will skim the abstract, look at the figures, and read the results once.
+
+## Abstract
+1. Report at most two headline numbers. Express the main effect in interpretable terms (relative change, multiple of the measured noise, or position relative to a known reference) rather than a list of raw full-precision values.
+2. Keep per-ablation deltas, statistical procedure (z-scores, pooled standard deviations, intervals, degrees of freedom), and internal configuration names out of the abstract. A qualitative sentence such as "most of the gain depends on component X" is enough.
+3. Define or avoid subfield jargon so a researcher from a neighboring area can follow it.
+4. End on the takeaway or implication of the work. Do not end on a list of null, borderline, or unresolved findings; one limiting clause is enough.
+
+## Results
+1. Open each paragraph with its finding stated as a claim, then point to the evidence (table or figure), then give the caveat.
+2. Tables and figures carry the numbers; prose interprets them. Quote only the numbers the argument needs and never restate every table cell in text.
+3. Report each effect once, against one clearly named reference. Put alternative references or robustness variants of the same effect in Supplementary Information.
+4. Write results as paragraphs, not bullet lists. Use bullets only for genuine enumerations such as compared configurations or limitations.
+5. Keep secondary statistical machinery (attribution games, bounds, worst-case pairings, extra significance variants) in Supplementary Information and summarize its conclusion in one sentence in the main text.
+6. State an unverified mechanism in at most one sentence, explicitly labeled as a hypothesis, or omit it. Analyses that were not performed belong in Limitations, not in the results narrative.
+7. Summarize unreplicated exploratory runs in one or two sentences in the main text; give their details in Supplementary Information.
+
+## Consistency
+1. Match numeric precision to the measured uncertainty; do not report more digits than the noise supports.
+2. Keep claim strength identical across abstract, introduction, results, and conclusion. Use words like "strong" or "robust" only where the evidence supports them everywhere they appear.
+3. Use one name per concept, method, and baseline throughout, defined once in the Method section.
+4. Do not repeat the same headline numbers in every section. The conclusion synthesizes and states implications; it does not recap the numbers.
+
+## Prose
+1. Write connected sentences with transitions that carry the argument. Avoid long runs of short single-fact sentences and verbless fragments.
+2. Captions describe what is shown and how to read it; the main text states the conclusions.
+
 # Method Section Detail Requirements
 The Method section must include clear subsections (or equivalent paragraph headings) covering:
 1. Problem setup:
@@ -284,6 +312,7 @@ Organize Results like a normal ML paper, with subsections such as:
 - Limitations discussion
 
 Prefer synthesis over chronology.
+Follow the `# Writing Style` rules above for how results are stated.
 Default to direct comparison views, transfer analysis, ablations, and failure analysis.
 Use progression plots only when the central claim is explicitly about optimization dynamics or sample efficiency, and when a static comparison cannot carry the point.
 Do not default to progression plots when direct comparison plots tell the story more clearly.
