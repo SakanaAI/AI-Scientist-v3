@@ -51,14 +51,18 @@ _SOURCE_BASELINE_SCHEMA_VERSION = 1
 _SOURCE_BASELINE_OMITTED_DIRS = frozenset({".git", ".venv", "__pycache__"})
 # Drafting output lives here by default; resources/ is recorded as one tree digest instead.
 _SOURCE_BASELINE_OMITTED_ROOT_ENTRIES = frozenset({".task_drafting", "resources"})
+# Scaffold files are small source files; larger files (data, checkpoints, logs) and
+# anything past the total budget stay unrecorded, so they are never replaced.
+_SOURCE_BASELINE_FILE_MAX_BYTES = 1024 * 1024
+_SOURCE_BASELINE_TOTAL_MAX_BYTES = 256 * 1024 * 1024
 
 
 def record_task_source_baseline(task_dir: Path, baseline_path: Path) -> None:
     """Record the user-supplied task bytes once, before drafting edits the staged copy.
 
     The record is write-once so a resumed run keeps the baseline of the original
-    source. Symlinks, special files and unreadable files are not recorded, so they
-    can never be replaced by publication. The drafting output that holds the record
+    source. Symlinks, special files, unreadable files and files above the size limits
+    are not recorded, so they can never be replaced by publication. The drafting output that holds the record
     is skipped wherever it lives inside the task.
     """
     if baseline_path.exists() or baseline_path.is_symlink():
@@ -75,6 +79,7 @@ def record_task_source_baseline(task_dir: Path, baseline_path: Path) -> None:
 
 def _source_file_digests(root: Path, *, output_dir: Path) -> dict[str, str]:
     digests: dict[str, str] = {}
+    budget = _SOURCE_BASELINE_TOTAL_MAX_BYTES
     for directory, directory_names, file_names in os.walk(root):
         current = Path(directory)
         directory_names[:] = sorted(
@@ -89,11 +94,15 @@ def _source_file_digests(root: Path, *, output_dir: Path) -> dict[str, str]:
             if path.is_symlink() or not path.is_file():
                 continue
             try:
+                size = path.stat().st_size
+                if size > min(_SOURCE_BASELINE_FILE_MAX_BYTES, budget):
+                    continue
                 digests[path.relative_to(root).as_posix()] = file_sha256(path)
             except (OSError, TaskPublicationError):
                 # Unreadable files, and files still being written, stay unrecorded and
                 # therefore never replaceable.
                 continue
+            budget -= size
     return digests
 
 

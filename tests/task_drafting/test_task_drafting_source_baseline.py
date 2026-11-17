@@ -343,3 +343,21 @@ def test_baseline_skips_files_that_change_while_hashed(
     source_baseline.record_task_source_baseline(task_dir, record)
 
     assert set(json.loads(record.read_text(encoding="utf-8"))["files"]) == {"task.md"}
+
+
+def test_baseline_skips_files_above_the_size_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task_dir = tmp_path / "task"
+    (task_dir / "data").mkdir(parents=True)
+    (task_dir / "data" / "a.bin").write_bytes(b"x" * 6)
+    (task_dir / "data" / "b.bin").write_bytes(b"x" * 6)
+    (task_dir / "data" / "huge.bin").write_bytes(b"x" * 11)
+    monkeypatch.setattr(source_baseline, "_SOURCE_BASELINE_FILE_MAX_BYTES", 10)
+    monkeypatch.setattr(source_baseline, "_SOURCE_BASELINE_TOTAL_MAX_BYTES", 8)
+    record = tmp_path / "record.json"
+
+    source_baseline.record_task_source_baseline(task_dir, record)
+
+    assert set(json.loads(record.read_text(encoding="utf-8"))["files"]) == {"data/a.bin"}
+
