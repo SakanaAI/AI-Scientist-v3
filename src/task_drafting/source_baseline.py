@@ -52,43 +52,59 @@ class SourceBaseline:
 
 _SOURCE_BASELINE_SCHEMA_VERSION = 1
 _SOURCE_BASELINE_OMITTED_DIRS = frozenset({".git", ".venv", "__pycache__"})
+# Drafting output lives here by default; resources/ is recorded as one tree digest instead.
+_SOURCE_BASELINE_OMITTED_ROOT_ENTRIES = frozenset({".task_drafting", "resources"})
 
 
 def record_task_source_baseline(task_dir: Path, baseline_path: Path) -> None:
     """Record the user-supplied task bytes once, before drafting edits the staged copy.
 
     The record is write-once so a resumed run keeps the baseline of the original
-    source. Symlinks and special files are not recorded, so they can never be
-    replaced by publication.
+    source. Symlinks, special files and unreadable files are not recorded, so they
+    can never be replaced by publication. The drafting output that holds the record
+    is skipped wherever it lives inside the task.
     """
     if baseline_path.exists() or baseline_path.is_symlink():
         return
     root = real_path(task_dir, "task directory")
-    file_digests: dict[str, str] = {}
+    payload = {
+        "schema_version": _SOURCE_BASELINE_SCHEMA_VERSION,
+        "files": _source_file_digests(root, output_dir=Path(os.path.abspath(baseline_path.parent))),
+        "resources_sha256": _source_resources_digest(root / "resources"),
+    }
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(baseline_path, (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode())
+
+
+def _source_file_digests(root: Path, *, output_dir: Path) -> dict[str, str]:
+    digests: dict[str, str] = {}
     for directory, directory_names, file_names in os.walk(root):
-        directory_names[:] = sorted(
-            name for name in directory_names if name not in _SOURCE_BASELINE_OMITTED_DIRS
-        )
         current = Path(directory)
+        directory_names[:] = sorted(
+            name
+            for name in directory_names
+            if name not in _SOURCE_BASELINE_OMITTED_DIRS
+            and not (current == root and name in _SOURCE_BASELINE_OMITTED_ROOT_ENTRIES)
+            and current / name != output_dir
+        )
         for name in sorted(file_names):
             path = current / name
             if path.is_symlink() or not path.is_file():
                 continue
-            file_digests[path.relative_to(root).as_posix()] = file_sha256(path)
-    resources_sha256: str | None = None
-    resources = root / "resources"
-    if resources.is_dir() and not resources.is_symlink():
-        try:
-            resources_sha256 = resource_tree_digest(resources, RESOURCE_MANIFEST)
-        except TaskPublicationError:
-            resources_sha256 = None
-    payload = {
-        "schema_version": _SOURCE_BASELINE_SCHEMA_VERSION,
-        "files": file_digests,
-        "resources_sha256": resources_sha256,
-    }
-    baseline_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(baseline_path, (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode())
+            try:
+                digests[path.relative_to(root).as_posix()] = file_sha256(path)
+            except OSError:
+                continue
+    return digests
+
+
+def _source_resources_digest(resources: Path) -> str | None:
+    if resources.is_symlink() or not resources.is_dir():
+        return None
+    try:
+        return resource_tree_digest(resources, RESOURCE_MANIFEST)
+    except (OSError, TaskPublicationError):
+        return None
 
 
 def load_source_baseline(baseline_path: Path | None) -> SourceBaseline | None:
@@ -102,8 +118,10 @@ def load_source_baseline(baseline_path: Path | None) -> SourceBaseline | None:
         )
     except (OSError, UnicodeError, json.JSONDecodeError, TaskPublicationError) as exc:
         raise TaskPublicationError(f"invalid task source baseline: {baseline_path}") from exc
-    files = payload.get("files") if isinstance(payload, dict) else None
-    resources_sha256 = payload.get("resources_sha256") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        raise TaskPublicationError(f"invalid task source baseline: {baseline_path}")
+    files = payload.get("files")
+    resources_sha256 = payload.get("resources_sha256")
     if (
         payload.get("schema_version") != _SOURCE_BASELINE_SCHEMA_VERSION
         or not isinstance(files, dict)

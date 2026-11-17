@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -124,6 +125,14 @@ def test_invalid_baseline_is_rejected(tmp_path: Path) -> None:
         fx.publish(source_baseline_path=baseline)
 
 
+def test_baseline_that_is_not_an_object_is_rejected(tmp_path: Path) -> None:
+    fx, baseline = _make_predrafted_fx(tmp_path)
+    baseline.write_text("[]\n", encoding="utf-8")
+
+    with pytest.raises(publication.TaskPublicationError, match="invalid task source baseline"):
+        fx.publish(source_baseline_path=baseline)
+
+
 def test_baseline_is_write_once(tmp_path: Path) -> None:
     task_dir = tmp_path / "task"
     task_dir.mkdir()
@@ -150,3 +159,39 @@ def test_baseline_skips_symlinks(tmp_path: Path) -> None:
     payload = json.loads(record.read_text(encoding="utf-8"))
     assert set(payload["files"]) == {"task.md"}
     assert payload["resources_sha256"] is None
+
+
+def test_baseline_skips_drafting_output_and_hashes_resources_once(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task"
+    (task_dir / "resources").mkdir(parents=True)
+    (task_dir / "resources" / "data.json").write_text("{}\n", encoding="utf-8")
+    (task_dir / "task.md").write_text("# one\n", encoding="utf-8")
+    earlier_draft = task_dir / ".task_drafting" / "draft_1" / "task"
+    earlier_draft.mkdir(parents=True)
+    (earlier_draft / "task.md").write_text("# copy\n", encoding="utf-8")
+    custom_output = task_dir / "drafts" / "now"
+    (custom_output / "task").mkdir(parents=True)
+    (custom_output / "task" / "task.md").write_text("# copy\n", encoding="utf-8")
+    record = custom_output / "baseline.json"
+
+    source_baseline.record_task_source_baseline(task_dir, record)
+
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    assert set(payload["files"]) == {"task.md"}
+    assert payload["resources_sha256"] is not None
+
+
+def test_baseline_skips_unreadable_files(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("# one\n", encoding="utf-8")
+    secret = task_dir / "secret.txt"
+    secret.write_text("x\n", encoding="utf-8")
+    secret.chmod(0)
+    if os.access(secret, os.R_OK):
+        pytest.skip("running with privileges that ignore file permissions")
+    record = tmp_path / "record.json"
+
+    source_baseline.record_task_source_baseline(task_dir, record)
+
+    assert set(json.loads(record.read_text(encoding="utf-8"))["files"]) == {"task.md"}
