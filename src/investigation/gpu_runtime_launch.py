@@ -96,7 +96,8 @@ def prepare_create(
         options.extend(("--name", name))
     labels = ["--label", f"agentic-scientist.lease={token}",
               "--label", f"agentic-scientist.launch={launch_id}"]
-    create = ["docker", "create", "--quiet", *labels, *options, *command[index:]]
+    # No --quiet: it needs Docker >= 20.10, and pull progress already goes to stderr.
+    create = ["docker", "create", *labels, *options, *command[index:]]
     return create, name, interactive, remove
 
 
