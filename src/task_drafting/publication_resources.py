@@ -29,8 +29,28 @@ def publish_resources(
     *,
     max_runtime_bytes: int,
     expected_sha256: str | None,
-    replaceable: bool = False,
 ) -> None:
+    """Install the accepted tree, or confirm an existing managed tree already matches it."""
+    _validate_staged_resources(source, max_runtime_bytes=max_runtime_bytes)
+    if target.exists():
+        require_matching_managed_resources(source, target)
+        return
+    _replace_tree(source, target, expected_sha256=expected_sha256)
+
+
+def replace_resources(
+    source: Path,
+    target: Path,
+    *,
+    max_runtime_bytes: int,
+    expected_sha256: str | None,
+) -> None:
+    """Install the accepted tree in place of the unchanged pre-drafting source tree."""
+    _validate_staged_resources(source, max_runtime_bytes=max_runtime_bytes)
+    _replace_tree(source, target, expected_sha256=expected_sha256)
+
+
+def _validate_staged_resources(source: Path, *, max_runtime_bytes: int) -> None:
     validate_tree(source)
     if (source / RESOURCE_MANIFEST).exists():
         raise TaskPublicationError("drafted resources contain a harness-owned manifest")
@@ -39,9 +59,9 @@ def publish_resources(
         raise TaskPublicationError(
             f"drafted runtime resources exceed configured limit ({max_runtime_bytes} bytes): {source}"
         )
-    if target.exists() and not replaceable:
-        require_matching_managed_resources(source, target)
-        return
+
+
+def _replace_tree(source: Path, target: Path, *, expected_sha256: str | None) -> None:
     parent_fd = open_absolute_directory(target.parent)
     replaced_name: str | None = None
     if target.exists():

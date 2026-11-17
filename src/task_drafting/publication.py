@@ -27,6 +27,7 @@ from src.task_drafting.publication_fs import (
 )
 from src.task_drafting.publication_resources import (
     publish_resources,
+    replace_resources,
     require_managed_resource_digest,
 )
 from src.task_drafting.source_baseline import (
@@ -180,22 +181,29 @@ def publish_task_scaffold(
     for relative in plan.files:
         source = staged_task_dir / relative
         target = task_dir / relative
-        replaceable = baseline is not None and baseline.matches_file(target, relative)
-        if relative == _PROGRAM_SPEC_PATH:
-            _publish_program_spec(source, target, replaceable=replaceable)
-        elif replaceable:
-            _publish_regular_file(source, target, replaceable=True)
+        if baseline is not None and baseline.matches_file(target, relative):
+            _replace_regular_file(source, target)
+        elif relative == _PROGRAM_SPEC_PATH:
+            _publish_program_spec(source, target)
         else:
             _publish_regular_file(source, target)
     if plan.resources is not None:
-        publish_resources(
-            staged_task_dir / plan.resources,
-            task_dir / plan.resources,
-            max_runtime_bytes=max_runtime_bytes,
-            expected_sha256=plan.resource_sha256,
-            replaceable=baseline is not None
-            and baseline.matches_resources(task_dir / plan.resources),
-        )
+        source = staged_task_dir / plan.resources
+        target = task_dir / plan.resources
+        if baseline is not None and baseline.matches_resources(target):
+            replace_resources(
+                source,
+                target,
+                max_runtime_bytes=max_runtime_bytes,
+                expected_sha256=plan.resource_sha256,
+            )
+        else:
+            publish_resources(
+                source,
+                target,
+                max_runtime_bytes=max_runtime_bytes,
+                expected_sha256=plan.resource_sha256,
+            )
     _publish_replaceable_bytes(plan.ignore_file, task_dir / TASK_COPY_IGNORE_FILENAME)
     if qualification_bytes is not None:
         _publish_bytes(qualification_bytes, task_dir / _QUALIFICATION_PATH)
@@ -630,25 +638,27 @@ def _preflight_bytes(target: Path, content: bytes) -> None:
         raise TaskPublicationError(f"existing task artifact differs from accepted scaffold: {target.name}")
 
 
-def _publish_regular_file(source: Path, target: Path, *, replaceable: bool = False) -> None:
+def _publish_regular_file(source: Path, target: Path) -> None:
     if target.exists():
         if _same_file_bytes(source, target):
-            return
-        if replaceable:
-            _atomic_copy(source, target, replace_existing=True)
             return
         raise TaskPublicationError(f"existing task artifact differs from accepted scaffold: {target}")
     _atomic_copy(source, target)
 
 
-def _publish_program_spec(source: Path, target: Path, *, replaceable: bool = False) -> None:
+def _replace_regular_file(source: Path, target: Path) -> None:
+    if not _same_file_bytes(source, target):
+        _atomic_copy(source, target, replace_existing=True)
+
+
+def _publish_program_spec(source: Path, target: Path) -> None:
     if not target.exists():
         _atomic_copy(source, target)
         return
     if not _program_spec_is_valid(target.parent):
         _atomic_copy(source, target, replace_existing=True)
         return
-    _publish_regular_file(source, target, replaceable=replaceable)
+    _publish_regular_file(source, target)
 
 
 def _publish_bytes(content: bytes, target: Path) -> None:
