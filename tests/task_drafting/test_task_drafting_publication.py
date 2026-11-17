@@ -630,6 +630,17 @@ _TRANSIENT_MESSAGES = [
     "connection reset by peer",
     "request timed out while contacting the model provider",
     "the model provider request timed out",
+    "API Error: Connection error.",
+    "API Error (Request timed out.)",
+    "APIConnectionError: Connection error.",
+    "Error: getaddrinfo ENOTFOUND api.anthropic.com",
+    "connect ECONNREFUSED 127.0.0.1:443",
+    "read ETIMEDOUT",
+    "Temporary failure in name resolution",
+    "stream disconnected before completion: error sending request",
+    "Error: socket hang up",
+    "TypeError: fetch failed",
+    '{"type":"user","message":"tool ok"}\n{"type":"result","is_error":true,"result":"API Error: Connection error."}',
 ]
 
 _NON_TRANSIENT_MESSAGES = [
@@ -637,6 +648,7 @@ _NON_TRANSIENT_MESSAGES = [
     ("permission-denied", "permission denied"),
     ("no-edit", "agent completed without editing the task"),
     ("incidental-429", "the report discusses HTTP 429 handling"),
+    ("incidental-network", "the evaluator reports a network error when offline"),
     ("empty", ""),
     ("permanent-wins-over-stale-transient", "rate limit exceeded\ninvalid API key"),
     (
@@ -650,6 +662,21 @@ _NON_TRANSIENT_MESSAGES = [
         '{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}',
     ),
     ("codex-capacity-after-429", "HTTP 429: rate limit exceeded\nSelected model is at capacity"),
+    (
+        "claude-tool-output-network-error",
+        '{"type":"user","message":{"content":[{"type":"tool_result",'
+        '"content":"psycopg2.OperationalError: connect ECONNREFUSED 127.0.0.1:5432"}]}}\n'
+        '{"type":"result","subtype":"error_max_turns","is_error":true}',
+    ),
+    (
+        "claude-assistant-prose-network-error",
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"The test hit socket hang up"}]}}',
+    ),
+    (
+        "codex-command-output-network-error",
+        '{"type":"item.completed","item":{"type":"command_execution",'
+        '"aggregated_output":"Error: getaddrinfo ENOTFOUND localhost"}}',
+    ),
 ]
 
 

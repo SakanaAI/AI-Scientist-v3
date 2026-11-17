@@ -19,6 +19,10 @@ def expand_evidence_contract(template: str) -> str:
         ),
         ("{{WORKER_DIAGNOSTICS_RECIPE}}", EVIDENCE_CONTRACT_PATH.with_name("worker_diagnostics.md")),
         ("{{REPAIR_DIAGNOSTICS_POLICY}}", EVIDENCE_CONTRACT_PATH.with_name("repair_diagnostics.md")),
+        (
+            "{{EVALUATOR_REPRODUCIBILITY_RULE}}",
+            EVIDENCE_CONTRACT_PATH.with_name("evaluator_reproducibility.md"),
+        ),
     ):
         if marker in template:
             template = template.replace(marker, path.read_text("utf-8"))

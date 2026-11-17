@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import Any
 from pathlib import Path
 
 from src.final_evaluation.candidate_broker import (
@@ -43,6 +44,7 @@ from src.final_evaluation.runner import (
 from .checkpoint_security import redact_sensitive_text
 from .storage_failures import storage_failure_category
 from .evaluator_outputs import EvaluatorOutputContractError, validate_evaluator_outputs
+from .evaluator_replay import EvaluationOutcome, replay_mismatch
 from .evaluator_tree import (
     MANAGED_RUNTIME_MANIFEST_FILENAME,
     TASK_SNAPSHOT_METADATA_FILENAME,
@@ -1755,6 +1757,29 @@ def _run_contracted_baseline(
     )
 
 
+def _evaluation_outcome(result: _BaselineEvaluationResult) -> EvaluationOutcome:
+    assert result.combined_score is not None and result.correct is not None
+    return EvaluationOutcome(result.combined_score, result.correct)
+
+
+def _replay_contracted_smoke_baseline(
+    first: _BaselineEvaluationResult,
+    evaluation_options: Mapping[str, Any],
+) -> TaskRuntimePreparationResult | None:
+    """Evaluate the unchanged baseline again; a different result is an authored failure."""
+    replay = _run_contracted_baseline(**evaluation_options)
+    if replay.status is _CheckedCommandStatus.INFRASTRUCTURE_FAILED:
+        return TaskRuntimePreparationResult.INFRASTRUCTURE_FAILURE
+    if replay.status is not _CheckedCommandStatus.SUCCEEDED:
+        logger.error("Replayed baseline evaluation failed validation")
+        return TaskRuntimePreparationResult.AUTHORED_FAILURE
+    mismatch = replay_mismatch(_evaluation_outcome(first), _evaluation_outcome(replay))
+    if mismatch is not None:
+        logger.error("Baseline replay failed: %s", mismatch)
+        return TaskRuntimePreparationResult.AUTHORED_FAILURE
+    return None
+
+
 def prepare_task_runtime(
     task_dir: Path,
     timeout_seconds: int = 1800,
@@ -2366,7 +2391,7 @@ def _prepare_task_runtime(
             baseline_correct: bool | None = None
             baseline_feasible: bool | None = None
             if contract is not None:
-                baseline_result = _run_contracted_baseline(
+                evaluation_options: dict[str, Any] = dict(
                     task_dir=task_dir,
                     runtime_venv=runtime_root / ".venv",
                     image_id=image_id,
@@ -2376,8 +2401,11 @@ def _prepare_task_runtime(
                     environment=environment,
                     run=run,
                     draft_smoke=draft_smoke,
-                    baseline_results_dir=baseline_results_dir,
                     evaluation_requirement=evaluation_requirement,
+                )
+                baseline_result = _run_contracted_baseline(
+                    **evaluation_options,
+                    baseline_results_dir=baseline_results_dir,
                     retained_results_dir=retained_results_dir,
                     baseline_artifacts_dir=baseline_artifacts_dir,
                 )
@@ -2386,6 +2414,12 @@ def _prepare_task_runtime(
                 if baseline_result.status is not _CheckedCommandStatus.SUCCEEDED:
                     logger.error("Offline baseline evaluation failed validation")
                     return TaskRuntimePreparationResult.AUTHORED_FAILURE
+                if draft_smoke:
+                    replay_failure = _replay_contracted_smoke_baseline(
+                        baseline_result, evaluation_options,
+                    )
+                    if replay_failure is not None:
+                        return replay_failure
                 baseline_score = baseline_result.combined_score
                 baseline_correct = baseline_result.correct
                 baseline_feasible = baseline_result.feasible

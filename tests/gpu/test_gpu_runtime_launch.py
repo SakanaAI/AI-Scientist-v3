@@ -51,7 +51,8 @@ def test_prepare_create_preserves_arguments_adds_labels_and_rejects_unsupported_
         ['docker', 'run', '--rm', '-i', '--env', 'KEY=value', 'image', '--name', 'inside'],
         'a' * 32, 'b' * 32,
     )
-    assert command[:3] == ['docker', 'create', '--quiet']
+    assert command[:2] == ['docker', 'create']
+    assert '--quiet' not in command  # unsupported before Docker 20.10 (issue #2)
     assert '--rm' not in command
     assert command[-3:] == ['image', '--name', 'inside']
     assert name == 'agentic-' + 'b' * 32
@@ -109,7 +110,9 @@ operation = args[0]
 if operation == 'info':
     print('test-daemon')
 elif operation == 'create':
-    assert '--quiet' in args
+    if '--quiet' in args:
+        print('unknown flag: --quiet', file=sys.stderr)
+        sys.exit(125)
     entry = next(iter(record['launches'].values()))
     assert entry['creator']['pid'] == os.getpid()
     assert entry['container_id'] is None

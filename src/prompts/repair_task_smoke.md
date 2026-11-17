@@ -99,3 +99,5 @@ failure reported by the harness-owned smoke gate.
 {{BASELINE_FAILURE_RECIPE}}
 
 {{WORKER_DIAGNOSTICS_RECIPE}}
+
+{{EVALUATOR_REPRODUCIBILITY_RULE}}

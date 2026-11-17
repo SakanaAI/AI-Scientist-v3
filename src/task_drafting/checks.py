@@ -59,6 +59,7 @@ from src.investigation.container_gpus import (
     GpuLeaseTimeout,
     acquire_gpu_allocation_lease,
 )
+from src.investigation.evaluator_replay import EvaluationOutcome, replay_mismatch
 from src.investigation.evaluator_tree import managed_evaluator_tree_digest
 from src.investigation.program_spec import entrypoint_relpath_from_spec
 from src.investigation.reset_sequence import reset_sequence_diagnostic
@@ -215,7 +216,7 @@ def _safe_scaffold_fingerprint(task_dir: Path) -> str:
         return "sha256:" + "0" * 64
 
 
-def _require_score(results_dir: Path, plane: str, contract: object) -> None:
+def _require_score(results_dir: Path, plane: str, contract: object) -> EvaluationOutcome:
     try:
         metrics = json.loads((results_dir / "metrics.json").read_text(encoding="utf-8"))
         correct = json.loads((results_dir / "correct.json").read_text(encoding="utf-8"))
@@ -244,6 +245,7 @@ def _require_score(results_dir: Path, plane: str, contract: object) -> None:
         )
     ):
         _authored(f"{plane}_invalid_results", f"{plane}_evaluator", "results")
+    return EvaluationOutcome(search_score, correct["correct"])
 
 
 def _native_smoke(settings: GateSettings, evaluator: str, entrypoint: str, plane: str) -> None:
@@ -264,6 +266,23 @@ def _native_smoke(settings: GateSettings, evaluator: str, entrypoint: str, plane
         TASK_EVALUATION_PLANE=plane,
         TASK_SOURCE_DIR=str(settings.task_dir),
     )
+    first = _native_evaluation(settings, evaluator, entrypoint, plane, safe_environment)
+    if plane != "search":
+        return
+    mismatch = replay_mismatch(
+        first, _native_evaluation(settings, evaluator, entrypoint, plane, safe_environment),
+    )
+    if mismatch is not None:
+        _authored("search_nondeterministic", "search_evaluator", "execution", mismatch)
+
+
+def _native_evaluation(
+    settings: GateSettings,
+    evaluator: str,
+    entrypoint: str,
+    plane: str,
+    safe_environment: dict[str, str],
+) -> EvaluationOutcome:
     with tempfile.TemporaryDirectory(prefix=f"agentic-task-{plane}-smoke-") as output:
         try:
             result = run_bounded_process(
@@ -296,7 +315,7 @@ def _native_smoke(settings: GateSettings, evaluator: str, entrypoint: str, plane
                 sanitize_diagnostic(diagnostic),
             )
         contract = load_task_contract(settings.task_dir / "task_contract.json")
-        _require_score(Path(output), plane, contract)
+        return _require_score(Path(output), plane, contract)
 
 
 def _prepare_runtime(settings: GateSettings, evaluator_digest: str) -> None:

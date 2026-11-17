@@ -963,6 +963,7 @@ def run_task_drafting(
     max_gate_checks_per_repair: int = 12,
     draft_max_attempts: int = 3,
     evaluator_smoke_timeout_seconds: int = 1800,
+    resume_from: str = "",
     max_runtime_bytes: int = 16 * 1024 * 1024 * 1024,
     max_idea_cycles: int = 20,
     max_program_evals_per_attempt: int = DEFAULT_MAX_PROGRAM_EVALS_PER_ATTEMPT,
@@ -1041,6 +1042,9 @@ def run_task_drafting(
             str(max_program_evals_per_attempt),
         ]
     )
+    if resume_from:
+        previous = resume_from if resume_from == "latest" else str(Path(resume_from).expanduser().absolute())
+        cmd.extend(["--resume-from", previous])
     if containerize:
         cmd.append("--containerize")
         cmd.extend(["--container-image", container_image])

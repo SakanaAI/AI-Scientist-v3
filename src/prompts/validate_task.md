@@ -121,7 +121,7 @@ evidence.
 - `candidate_editability`: candidate interface and editable boundary permit the intended research contribution.
 - `compute_realism`: budgets and GPU/CPU declarations fit the task and runnable harness. Each plane's `max_candidate_rpc_calls` must cover the complete production RPC transcript across all declared primary seeds and any permitted replay without exceeding the harness ceiling.
 - `execution_feasibility`: rubric decisions use evaluator-owned observations or computation sufficient for a credible best-shot operational test, setup plus baselines plus candidate training plus rollouts plus cleanup fit the plane deadline, and declared dependencies can be installed on the stated platform; candidate-reported internal state remains untrusted and must not contribute to rubric decisions. Do not attempt exhaustive causal proof of hidden mechanisms.
-- `reproducibility`: seeds, provenance, dependencies, hashes, and deterministic controls are sufficient.
+- `reproducibility`: seeds, provenance, dependencies, hashes, and deterministic controls are sufficient; evaluating a fixed program twice returns identical scores, and any secret that hides seeds from the candidate is a fixed task-owned value, never drawn per invocation (`secrets.*`, `os.urandom`, `uuid.uuid4`, time).
 - `publication_scope`: publication gate prevents development-only or mismatched experiments from supporting broader claims.
 
 For `execution_feasibility`, check search/final runtime compatibility: compare the effective
