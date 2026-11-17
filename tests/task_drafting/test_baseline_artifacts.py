@@ -431,7 +431,7 @@ def test_preparation_retains_incorrect_smoke_evidence(
         assert result is runtime.TaskRuntimePreparationResult.READY
     else:
         assert result is True
-    assert len(observed) == 1
+    assert len(observed) == (2 if contracted else 1)  # contracted smoke replays once
     assert observed[0].exists() is retain
     manifest = json.loads((task / ".agentic_runtime.json").read_text())
     assert manifest["baseline_correct"] is False
