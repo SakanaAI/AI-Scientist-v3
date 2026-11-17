@@ -58,15 +58,13 @@ _SOURCE_BASELINE_TOTAL_MAX_BYTES = 256 * 1024 * 1024
 
 
 def record_task_source_baseline(task_dir: Path, baseline_path: Path) -> None:
-    """Record the user-supplied task bytes once, before drafting edits the staged copy.
+    """Record the user-supplied task bytes before drafting edits the staged copy.
 
-    The record is write-once so a resumed run keeps the baseline of the original
-    source. Symlinks, special files, unreadable files and files above the size limits
+    Each drafting run writes its record into a fresh output directory, so an existing
+    record is never overwritten. Symlinks, special files, unreadable files and files above the size limits
     are not recorded, so they can never be replaced by publication. The drafting output that holds the record
     is skipped wherever it lives inside the task.
     """
-    if baseline_path.exists() or baseline_path.is_symlink():
-        return
     root = real_path(task_dir, "task directory")
     payload = {
         "schema_version": _SOURCE_BASELINE_SCHEMA_VERSION,

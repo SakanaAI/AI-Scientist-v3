@@ -259,7 +259,7 @@ def test_baseline_that_is_not_an_object_is_rejected(tmp_path: Path) -> None:
         fx.publish(source_baseline_path=baseline)
 
 
-def test_baseline_is_write_once(tmp_path: Path) -> None:
+def test_baseline_never_overwrites_an_existing_record(tmp_path: Path) -> None:
     task_dir = tmp_path / "task"
     task_dir.mkdir()
     (task_dir / "task.md").write_text("# one\n", encoding="utf-8")
@@ -268,7 +268,8 @@ def test_baseline_is_write_once(tmp_path: Path) -> None:
     first = record.read_bytes()
     (task_dir / "task.md").write_text("# two\n", encoding="utf-8")
 
-    source_baseline.record_task_source_baseline(task_dir, record)
+    with pytest.raises(FileExistsError):
+        source_baseline.record_task_source_baseline(task_dir, record)
 
     assert record.read_bytes() == first
 
