@@ -62,6 +62,9 @@ task_drafting:
   max_runtime_bytes: 17179869184
   draft_max_attempts: 3
   evaluator_smoke_timeout_seconds: 1800
+  # Continue a draft that failed before publication: an earlier draft_* directory or "latest".
+  # Reuses its accepted design and staged scaffold; every validation gate runs again.
+  resume_from: ""
 
 paper:
   enabled: false

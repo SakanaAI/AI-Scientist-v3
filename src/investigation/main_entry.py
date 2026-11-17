@@ -588,6 +588,7 @@ def run_main_flow(
             max_gate_checks_per_repair=cfg.task_drafting.max_gate_checks_per_repair,
             draft_max_attempts=cfg.task_drafting.draft_max_attempts,
             evaluator_smoke_timeout_seconds=cfg.task_drafting.evaluator_smoke_timeout_seconds,
+            resume_from=cfg.task_drafting.resume_from,
             max_idea_cycles=cfg.execution.max_idea_cycles,
             max_program_evals_per_attempt=cfg.execution.max_program_evals_per_attempt,
             max_runtime_bytes=cfg.task_drafting.max_runtime_bytes,

@@ -218,6 +218,8 @@ class TaskDraftingConfig:
     max_runtime_bytes: int = 16 * 1024 * 1024 * 1024
     draft_max_attempts: int = 3
     evaluator_smoke_timeout_seconds: int = 1800
+    # Earlier draft directory (or "latest") whose design and scaffold seed a new draft.
+    resume_from: str = ""
 
 
 @dataclass

@@ -292,6 +292,16 @@ from a shipped scaffold for anything beyond a small task, and check the
 drafting audit under `task_drafting/` when a draft is rejected. See
 [docs/task_drafting.md](docs/task_drafting.md).
 
+A draft that fails before publication (a network drop, a Docker error, an
+exhausted repair budget) can continue from its accepted design and staged
+scaffold instead of starting over. Every validation gate runs again:
+
+```bash
+agsci run examples/circpack_task_drafting execution.phases=task_drafting \
+  paths.run_dir=results/circpack_task_drafting/claude/<run_id> \
+  investigation.task_drafting.resume_from=latest
+```
+
 ## Agent skills: set up a task and run a campaign
 
 Two agent skills under [`skills/`](skills/) let a coding agent such as Claude

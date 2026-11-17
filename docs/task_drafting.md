@@ -45,6 +45,37 @@ Focused diagnostic checks:
 ./.venv/bin/pytest -q tests/runtime/test_bounded_process.py
 ```
 
+## Resuming a failed draft
+
+`investigation.task_drafting.resume_from` seeds a new draft from an earlier one in the same
+`task_drafting/_task_drafting/` directory. Pass `latest` or the earlier `draft_*` path, together
+with the same `paths.run_dir`.
+
+- The earlier draft's staged scaffold is copied into the new draft, without its runtime (`.venv`,
+  runtime manifest, bytecode). A complete scaffold skips the scaffold agent. An incomplete one,
+  for example after a network drop, is continued with the missing-artifact feedback.
+- The accepted task design is reused only when its `design_receipt.json` still matches the
+  design and review bytes (robust workflow). Otherwise design runs again, and a retained
+  scaffold goes back to the scaffold agent to match the new design. The receipt is an unkeyed
+  digest in agent-writable draft output, so a reused design is trusted as far as it is within a
+  single draft.
+- Contract, smoke, alignment and qualification gates all run again on the new draft. Earlier
+  verdicts are not trusted.
+- Resume is refused when the task source (`task.md`, other source files, `resources/`) changed
+  after the earlier draft started: small files by content digest, larger ones by modification
+  time. Start a fresh draft in that case.
+- `latest` picks the newest earlier `draft_*` that staged a scaffold.
+
+## Evaluator reproducibility
+
+Draft search smoke evaluates the unchanged baseline twice. A different `combined_score` (beyond
+float summation noise) or correctness flag fails as `search_nondeterministic` (native) or
+`runtime_baseline_validation` (containerized), with the message
+`evaluator is not deterministic: ...`, and goes to scaffold repair. The usual cause is an
+evaluator that draws a seed or secret per invocation (`secrets.*`, `os.urandom`, `uuid.uuid4`,
+wall-clock time). A secret that hides seeds from the candidate must be a fixed, task-owned value.
+Production evaluations are not replayed.
+
 ## Qualification recovery
 
 Initial drafting checks contract and reduced search/final smoke, then independent alignment,

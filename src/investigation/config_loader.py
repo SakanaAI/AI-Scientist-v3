@@ -370,6 +370,7 @@ def _dict_to_config(d: dict) -> InvestigationConfig:
             evaluator_smoke_timeout_seconds=int(
                 task_drafting_d.get("evaluator_smoke_timeout_seconds", 1800)
             ),
+            resume_from=str(task_drafting_d.get("resume_from") or ""),
         ),
         paper=PaperConfig(
             enabled=bool(paper_d.get("enabled", False)),
