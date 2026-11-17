@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
-import os
-import secrets
-import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,16 +16,26 @@ from src.task_drafting.publication_fs import (
     atomic_write as _atomic_write,
     file_sha256 as _file_sha256,
     fsync_directory as _fsync_directory,
-    fsync_tree as _fsync_tree,
-    open_absolute_directory as _open_absolute_directory,
     read_regular_bytes as _read_regular_bytes,
     real_path as _real_path,
     regular_file_identity as _regular_file_identity,
     regular_tree_files as _regular_tree_files,
+    replace_verified_file as _replace_verified_file,
+    RESOURCE_MANIFEST as _RESOURCE_MANIFEST,
     resource_tree_digest,
     same_file_bytes as _same_file_bytes,
     unlink_regular_file_if_identity as _unlink_regular_file_if_identity,
     validate_tree as _validate_tree,
+)
+from src.task_drafting.publication_resources import (
+    publish_resources,
+    replace_resources,
+    require_managed_resource_digest,
+)
+from src.task_drafting.source_baseline import (
+    REPLACED_SOURCE_DIRNAME,
+    SourceBaseline,
+    load_source_baseline,
 )
 from src.task_drafting.qualification import (
     TaskQualificationError,
@@ -44,7 +52,6 @@ _MARKER_PATH = Path(".agentic_task_validation.json")
 _PUBLICATION_PATH = Path(".agentic_task_publication.json")
 _QUALIFICATION_PATH = Path(".agentic_task_qualification.json")
 _PROGRAM_SPEC_PATH = Path("program_0/program_spec.toml")
-_RESOURCE_MANIFEST = ".agentic_resource_manifest.json"
 _RUNTIME_FILE_MAX_BYTES = 1024 * 1024
 _MAX_RUNTIME_PUBLICATION_BYTES = 64 * 1024 * 1024 * 1024
 
@@ -57,6 +64,14 @@ class _PublicationPlan:
     resources: Path | None
     resource_sha256: str | None
     manifest: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _Replacements:
+    """Destination artifacts that still hold the pre-drafting source bytes."""
+
+    files: frozenset[Path]
+    resources: bool
 
 
 def validate_staged_runtime_resources(
@@ -111,8 +126,18 @@ def publish_task_scaffold(
     alignment_report_path: Path,
     qualification_receipt_path: Path | None = None,
     max_runtime_bytes: int,
-) -> None:
-    """Publish one validated scaffold without consuming its staged source."""
+    source_baseline_path: Path | None = None,
+) -> tuple[str, ...]:
+    """Publish one validated scaffold without consuming its staged source.
+
+    ``source_baseline_path`` points at the record written by
+    :func:`record_task_source_baseline` when the task was staged. Destination
+    artifacts that still match it are replaced by the accepted scaffold; without it,
+    any differing destination artifact aborts publication. Each original is checked
+    against the baseline again after it is moved aside and copied to
+    ``output_dir/replaced_task_source`` before it is replaced; the task-relative paths
+    of the replaced originals are returned.
+    """
     task_dir, staged_task_dir, output_dir, alignment_report_path = _validated_roots(
         task_dir, staged_task_dir, output_dir, alignment_report_path
     )
@@ -135,36 +160,63 @@ def publish_task_scaffold(
     ):
         raise TaskPublicationError("task destination contains a stale qualification receipt")
     _validate_staged_acceptance(staged_task_dir, alignment_report_path)
+    baseline = load_source_baseline(source_baseline_path)
     if _settle_existing_marker(
         task_dir,
         alignment_report_path,
         plan,
         qualification_bytes,
     ):
-        return
-    _preflight_destination(
+        return ()
+    replaceable = _preflight_destination(
         task_dir,
         staged_task_dir,
         alignment_report_path,
         plan,
         qualification_bytes,
+        baseline,
     )
     _publish_bytes(plan.manifest, task_dir / _PUBLICATION_PATH)
 
+    backup_dir = output_dir / REPLACED_SOURCE_DIRNAME
+    replaced: list[str] = []
     for relative in plan.files:
         source = staged_task_dir / relative
         target = task_dir / relative
-        if relative == _PROGRAM_SPEC_PATH:
+        if relative in replaceable.files:
+            assert baseline is not None
+            if _replace_verified_file(
+                source,
+                target,
+                baseline_sha256=baseline.file_sha256[relative.as_posix()],
+                backup=backup_dir / relative,
+            ):
+                replaced.append(relative.as_posix())
+        elif relative == _PROGRAM_SPEC_PATH:
             _publish_program_spec(source, target)
         else:
             _publish_regular_file(source, target)
     if plan.resources is not None:
-        _publish_resources(
-            staged_task_dir / plan.resources,
-            task_dir / plan.resources,
-            max_runtime_bytes=max_runtime_bytes,
-            expected_sha256=plan.resource_sha256,
-        )
+        source = staged_task_dir / plan.resources
+        target = task_dir / plan.resources
+        if replaceable.resources:
+            assert baseline is not None and baseline.resources_sha256 is not None
+            if replace_resources(
+                source,
+                target,
+                max_runtime_bytes=max_runtime_bytes,
+                expected_sha256=plan.resource_sha256,
+                baseline_sha256=baseline.resources_sha256,
+                backup=backup_dir / plan.resources,
+            ):
+                replaced.append(f"{plan.resources.as_posix()}/")
+        else:
+            publish_resources(
+                source,
+                target,
+                max_runtime_bytes=max_runtime_bytes,
+                expected_sha256=plan.resource_sha256,
+            )
     _publish_replaceable_bytes(plan.ignore_file, task_dir / TASK_COPY_IGNORE_FILENAME)
     if qualification_bytes is not None:
         _publish_bytes(qualification_bytes, task_dir / _QUALIFICATION_PATH)
@@ -186,6 +238,7 @@ def publish_task_scaffold(
     except BaseException:
         _unlink_regular_file_if_identity(marker_path, marker_identity)
         raise
+    return tuple(replaced)
 
 
 def task_publication_plan_sha256(
@@ -474,13 +527,19 @@ def _preflight_destination(
     alignment_report_path: Path,
     plan: _PublicationPlan,
     qualification_bytes: bytes | None,
-) -> None:
+    baseline: SourceBaseline | None = None,
+) -> _Replacements:
+    """Reject destination conflicts and return the artifacts that match the source baseline."""
     target_spec_is_valid = _program_spec_is_valid(task_dir / "program_0")
+    replaceable_files: set[Path] = set()
     for relative in plan.files:
         source = staged_task_dir / relative
         target = task_dir / relative
         _reject_symlink_components(target, task_dir)
         if not target.exists() or _same_file_bytes(source, target):
+            continue
+        if baseline is not None and baseline.matches_file(target, relative):
+            replaceable_files.add(relative)
             continue
         if relative == _PROGRAM_SPEC_PATH and not target_spec_is_valid:
             continue
@@ -500,8 +559,12 @@ def _preflight_destination(
         task_dir / _QUALIFICATION_PATH
     ).is_symlink():
         raise TaskPublicationError("task destination contains a stale qualification receipt")
+    replaceable = _Replacements(files=frozenset(replaceable_files), resources=False)
     if plan.resources is not None and (task_dir / plan.resources).exists():
-        _require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
+        if baseline is not None and baseline.matches_resources(task_dir / plan.resources):
+            return dataclasses.replace(replaceable, resources=True)
+        require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
+    return replaceable
 
 
 def _program_spec_is_valid(program_dir: Path) -> bool:
@@ -574,7 +637,7 @@ def _validate_published_plan(task_dir: Path, plan: _PublicationPlan) -> None:
                 f"published artifact differs from publication plan: {relative.as_posix()}"
             )
     if plan.resources is not None:
-        _require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
+        require_managed_resource_digest(task_dir / plan.resources, plan.resource_sha256)
 
 
 def _bytes_match(path: Path, expected: bytes) -> bool:
@@ -625,90 +688,6 @@ def _publish_replaceable_bytes(content: bytes, target: Path) -> None:
         target, maximum_bytes=len(content) + 1
     ) != content:
         _atomic_write(target, content, replace_existing=True)
-
-
-def _publish_resources(
-    source: Path,
-    target: Path,
-    *,
-    max_runtime_bytes: int,
-    expected_sha256: str | None,
-) -> None:
-    _validate_tree(source)
-    if (source / _RESOURCE_MANIFEST).exists():
-        raise TaskPublicationError("drafted resources contain a harness-owned manifest")
-    total_bytes = sum(path.stat().st_size for path in _regular_tree_files(source))
-    if total_bytes > max_runtime_bytes:
-        raise TaskPublicationError(
-            f"drafted runtime resources exceed configured limit ({max_runtime_bytes} bytes): {source}"
-        )
-    if target.exists():
-        _require_matching_managed_resources(source, target)
-        return
-    parent_fd = _open_absolute_directory(target.parent)
-    temporary_name = f".{target.name}.publish-{secrets.token_hex(12)}"
-    os.mkdir(temporary_name, 0o700, dir_fd=parent_fd)
-    temporary = (Path(f"/proc/self/fd/{parent_fd}") / temporary_name).resolve(strict=True)
-    try:
-        shutil.copytree(source, temporary, dirs_exist_ok=True, symlinks=True)
-        _validate_tree(temporary)
-        resource_digest = resource_tree_digest(temporary, _RESOURCE_MANIFEST)
-        if resource_digest != expected_sha256:
-            raise TaskPublicationError("drafted resources changed during publication")
-        manifest = {
-            "managed_by": "agentic-scientist-task-drafting",
-            "schema_version": 1,
-            "sha256": resource_digest,
-        }
-        _atomic_write(
-            temporary / _RESOURCE_MANIFEST,
-            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
-        )
-        _fsync_tree(temporary)
-        try:
-            os.replace(
-                temporary_name,
-                target.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-            )
-            os.fsync(parent_fd)
-        except OSError:
-            if not target.exists():
-                raise
-            _require_matching_managed_resources(source, target)
-    finally:
-        if temporary.exists():
-            shutil.rmtree(temporary)
-        os.close(parent_fd)
-
-
-def _require_matching_managed_resources(source: Path, target: Path) -> None:
-    _require_managed_resource_digest(
-        target,
-        resource_tree_digest(source, _RESOURCE_MANIFEST),
-    )
-
-
-def _require_managed_resource_digest(target: Path, expected_sha256: str | None) -> None:
-    _validate_tree(target)
-    manifest_path = target / _RESOURCE_MANIFEST
-    try:
-        manifest = json.loads(
-            _read_regular_bytes(
-                manifest_path,
-                maximum_bytes=_RUNTIME_FILE_MAX_BYTES,
-            ).decode("utf-8")
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise TaskPublicationError(f"invalid managed task resources: {target}") from exc
-    target_digest = resource_tree_digest(target, _RESOURCE_MANIFEST)
-    if manifest != {
-        "managed_by": "agentic-scientist-task-drafting",
-        "schema_version": 1,
-        "sha256": target_digest,
-    } or target_digest != expected_sha256:
-        raise TaskPublicationError("drafted resources differ from existing managed task resources")
 
 
 def _validate_destination(task_dir: Path, report_path: Path) -> None:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import logging
 import os
 import secrets
 import stat
@@ -13,6 +15,7 @@ from pathlib import Path
 TREE_MAX_DEPTH = 64
 TREE_MAX_ENTRIES = 100_000
 FileIdentity = tuple[int, int]
+_logger = logging.getLogger(__name__)
 
 
 class TaskPublicationError(ValueError):
@@ -21,6 +24,9 @@ class TaskPublicationError(ValueError):
 
 class TaskPublicationDeadlineExceeded(TaskPublicationError):
     """Raised when a bounded publication traversal exhausts its deadline."""
+
+
+RESOURCE_MANIFEST = ".agentic_resource_manifest.json"
 
 
 def real_path(path: Path, role: str) -> Path:
@@ -343,6 +349,88 @@ def _unlink_if_present(parent_fd: int, name: str) -> None:
         os.unlink(name, dir_fd=parent_fd)
     except FileNotFoundError:
         pass
+
+
+def move_aside(parent_fd: int, name: str) -> str | None:
+    """Rename ``name`` to a hidden sibling and return that name, or None when absent.
+
+    Once moved aside, the original can be verified without racing writes through
+    its path: a concurrent writer recreates ``name`` instead of editing it.
+    """
+    aside_name = f".{name}.replaced-{secrets.token_hex(12)}"
+    try:
+        os.rename(name, aside_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    except FileNotFoundError:
+        return None
+    return aside_name
+
+
+def restore_aside(parent_fd: int, aside_name: str, target: Path, failure: BaseException) -> None:
+    """Move an original back to ``target`` without replacing anything that appeared there.
+
+    When ``target`` was recreated meanwhile, the original stays aside and its location
+    is attached to ``failure``.
+    """
+    try:
+        if stat.S_ISDIR(os.stat(aside_name, dir_fd=parent_fd, follow_symlinks=False).st_mode):
+            # rename(2) refuses to replace a non-empty directory.
+            os.rename(aside_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        else:
+            os.link(
+                aside_name,
+                target.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            os.unlink(aside_name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except OSError as exc:
+        failure.add_note(
+            f"original task artifact was kept at {target.with_name(aside_name)} "
+            f"because {target} could not be restored: {exc}"
+        )
+
+
+def replace_verified_file(source: Path, target: Path, *, baseline_sha256: str, backup: Path) -> bool:
+    """Replace ``target`` with ``source`` only while it still holds the baseline bytes.
+
+    ``target`` is moved aside, copied to ``backup`` and verified from that copy, so the
+    saved original is exactly the verified one and a concurrent edit or recreation of
+    ``target`` aborts the replacement. Returns whether ``target`` was replaced.
+    """
+    if same_file_bytes(source, target):
+        return False
+    parent_fd = open_absolute_directory(target.parent)
+    try:
+        aside_name = move_aside(parent_fd, target.name)
+        if aside_name is None:
+            raise TaskPublicationError(f"task artifact disappeared during publication: {target}")
+        try:
+            atomic_copy(target.with_name(aside_name), backup, replace_existing=True)
+            if file_sha256(backup) != baseline_sha256:
+                raise TaskPublicationError(f"task artifact changed during publication: {target}")
+            atomic_copy(source, target)
+        except BaseException as exc:
+            # The original goes back in place, so its backup would be misleading.
+            with contextlib.suppress(OSError):
+                backup.unlink(missing_ok=True)
+            restore_aside(parent_fd, aside_name, target, exc)
+            raise
+        _discard_aside_file(parent_fd, aside_name, target)
+        return True
+    finally:
+        os.close(parent_fd)
+
+
+def _discard_aside_file(parent_fd: int, aside_name: str, target: Path) -> None:
+    try:
+        os.unlink(aside_name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except OSError as exc:
+        _logger.warning(
+            "could not remove replaced task artifact at %s: %s", target.with_name(aside_name), exc
+        )
 
 
 def _publish_temporary(

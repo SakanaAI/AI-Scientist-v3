@@ -423,6 +423,19 @@ task_progress_initialize
 TASK_SOURCE_DIR="$TASK_DIR"
 STAGED_TASK_DIR="$(ensure_staged_task_copy "$REPO_ROOT" "$TASK_SOURCE_DIR" "$OUTPUT_DIR")"
 ensure_workspace_dir_alias "$REPO_ROOT" "$OUTPUT_DIR" "task" "$STAGED_TASK_DIR" >/dev/null
+# Record the user-supplied task bytes before drafting repairs the staged copy, so
+# publication can tell the harness's own repairs apart from concurrent edits.
+TASK_SOURCE_BASELINE="$OUTPUT_DIR/.task_source_baseline.json"
+"$PYTHON_BIN" - "$REPO_ROOT" "$TASK_SOURCE_DIR" "$TASK_SOURCE_BASELINE" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+
+from src.task_drafting.source_baseline import record_task_source_baseline
+
+record_task_source_baseline(Path(sys.argv[2]), Path(sys.argv[3]))
+PY
 
 export DRAFT_OUTPUT_DIR="$OUTPUT_DIR"
 export TASK_REPO_ROOT="$REPO_ROOT"
@@ -3614,27 +3627,35 @@ fi
 "$PYTHON_BIN" - \
   "$TASK_DIR" "$STAGED_TASK_DIR" "$REPO_ROOT" "$OUTPUT_DIR" \
   "$ACCEPTED_ALIGNMENT_REPORT" "$ACCEPTED_QUALIFICATION_RECEIPT" \
-  "$TASK_DRAFT_MAX_RUNTIME_BYTES" <<'PY'
+  "$TASK_DRAFT_MAX_RUNTIME_BYTES" "$TASK_SOURCE_BASELINE" <<'PY'
 import sys
 from pathlib import Path
 
 sys.path.insert(0, sys.argv[3])
 
 from src.task_drafting.publication import TaskPublicationError, publish_task_scaffold
+from src.task_drafting.source_baseline import REPLACED_SOURCE_DIRNAME
 from src.investigation.task_alignment import TaskAlignmentError
 from src.investigation.task_contract import TaskContractError
 
 try:
-    publish_task_scaffold(
+    replaced = publish_task_scaffold(
         task_dir=Path(sys.argv[1]),
         staged_task_dir=Path(sys.argv[2]),
         output_dir=Path(sys.argv[4]),
         alignment_report_path=Path(sys.argv[5]),
         qualification_receipt_path=Path(sys.argv[6]) if sys.argv[6] else None,
         max_runtime_bytes=int(sys.argv[7]),
+        source_baseline_path=Path(sys.argv[8]) if Path(sys.argv[8]).is_file() else None,
     )
 except (OSError, TaskPublicationError, TaskAlignmentError, TaskContractError) as exc:
     raise SystemExit(str(exc)) from exc
+if replaced:
+    print(
+        "[task.sh] replaced unchanged task source with the repaired scaffold: "
+        + ", ".join(replaced)
+        + f"; originals saved in {Path(sys.argv[4]) / REPLACED_SOURCE_DIRNAME}"
+    )
 print("[task.sh] validated drafted task scaffold files")
 PY
 discard_staged_runtime_for_repair
