@@ -36,7 +36,7 @@ from pypdf import PdfReader
 with contextlib.redirect_stdout(io.StringIO()):
     import pymupdf4llm
 
-MODEL = "o4-mini-2025-04-16"
+MODEL = "gpt-5.6-terra"
 REVIEWER_COUNT = 5
 REVIEW_ATTEMPTS = 2
 MAX_COMPLETION_TOKENS = 16384
