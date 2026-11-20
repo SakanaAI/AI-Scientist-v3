@@ -258,8 +258,8 @@ charges are stored as reported costs, and models.dev calculations and pinned
 official API list prices are stored as estimated costs. Both contribute to
 `total_cost_usd` while retaining separate provenance and subtotals. If pricing
 is unavailable, the event is marked `usage_only` rather than `$0`.
-The automated review currently pins o4-mini's official input, cached-input, and
-output list rates; updating its model or rates requires an intentional code change.
+The automated review currently pins gpt-5.6-terra's official standard-tier input,
+cached-input, and output list rates; updating its model or rates requires an intentional code change.
 CPU, GPU, and other infrastructure costs are not included.
 Autoillustrate's self-reported Headless charges are included; its own estimated
 image and vision charges remain usage-only.

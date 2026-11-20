@@ -11,18 +11,17 @@ from pathlib import Path
 from .cost_tracking import ApiTokenPrice
 
 
-# OpenAI list-price snapshot checked 2026-08-30:
-# https://developers.openai.com/api/docs/models/o4-mini
-_O4_MINI_PRICE = ApiTokenPrice(
-    input_per_million=Decimal("1.10"),
-    cached_input_per_million=Decimal("0.275"),
-    output_per_million=Decimal("4.40"),
+# OpenAI standard-tier list-price snapshot checked 2026-11-20 (prompts <=272K input tokens):
+# https://developers.openai.com/api/docs/models/gpt-5.6-terra
+_GPT_5_6_TERRA_PRICE = ApiTokenPrice(
+    input_per_million=Decimal("2.00"),
+    cached_input_per_million=Decimal("0.20"),
+    output_per_million=Decimal("12.00"),
     pricing_source="openai",
     pricing_status="pinned",
 )
 _REVIEW_TOKEN_PRICES = {
-    "o4-mini": _O4_MINI_PRICE,
-    "o4-mini-2025-04-16": _O4_MINI_PRICE,
+    "gpt-5.6-terra": _GPT_5_6_TERRA_PRICE,
 }
 
 

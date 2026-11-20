@@ -187,7 +187,7 @@ def test_get_response_records_usage_in_cost_ledger_and_tolerates_missing_account
     assert content == "review content"
     summary = json.loads((cost_root / "metrics" / "cost_summary.json").read_text(encoding="utf-8"))
     assert summary["reported_cost_usd"] == "0"
-    assert summary["estimated_cost_usd"] == "0.0002695"
+    assert summary["estimated_cost_usd"] == "0.000624"
     assert summary["estimated_events"] == 1
     assert summary["usage_only_events"] == 0
     assert summary["usage"]["reasoning_output_tokens"] == 8
@@ -200,7 +200,7 @@ def test_get_response_records_usage_in_cost_ledger_and_tolerates_missing_account
     assert event["pricing_source"] == "openai"
     assert event["pricing_status"] == "pinned"
     assert event["cost_breakdown_usd"] == {
-        "cache_read": "0.0000055", "input": "0.00011", "output": "0.000154", "total": "0.0002695",
+        "cache_read": "0.000004", "input": "0.0002", "output": "0.00042", "total": "0.000624",
     }
 
     # records usage when the reviewer is launched outside the repo
