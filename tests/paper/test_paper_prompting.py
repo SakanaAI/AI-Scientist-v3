@@ -584,3 +584,17 @@ done
     assert "paper_repair_prompt_round_1.md" in result.stdout
     for requirement in POLICY:
         assert requirement in result.stdout
+
+
+# ── shared writing-style rules reach every manuscript writer ──
+
+STYLE_TEMPLATES = ("paper.md", "paper_standalone.md", "paper_edit_standalone.md")
+
+
+@pytest.mark.parametrize("template", STYLE_TEMPLATES)
+def test_rendered_writer_prompts_include_shared_writing_style_once(
+    template: str, tmp_path: Path
+) -> None:
+    rendered = _render(template, tmp_path)
+    assert rendered.count("# Writing Style\n") == 1
+    assert "PAPER_WRITING_STYLE" not in rendered

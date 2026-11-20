@@ -23,6 +23,7 @@ def expand_evidence_contract(template: str) -> str:
             "{{EVALUATOR_REPRODUCIBILITY_RULE}}",
             EVIDENCE_CONTRACT_PATH.with_name("evaluator_reproducibility.md"),
         ),
+        ("{{PAPER_WRITING_STYLE}}", EVIDENCE_CONTRACT_PATH.with_name("paper_writing_style.md")),
     ):
         if marker in template:
             template = template.replace(marker, path.read_text("utf-8"))
