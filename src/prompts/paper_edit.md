@@ -224,6 +224,8 @@ If data is limited, still prioritize method and results depth over brevity.
 
 Before writing the abstract, privately sketch the broad context, the concrete setting, the exact gap or question, the central method or hypothesis, the strongest grounded result, the strongest comparison point, and the broader implication or main limit. Then write the abstract from that private plan rather than from the order in which the run unfolded. The closing portion of the abstract can use one or two sentences to place the results in a more general context and, when accessibility is materially improved, may also add two or three sentences that provide a broader perspective readable to a scientist in any discipline.
 
+{{PAPER_WRITING_STYLE}}
+
 # Method Section Detail Requirements
 The Method section must include clear subsections (or equivalent paragraph headings) covering:
 0. Compatibility audit:

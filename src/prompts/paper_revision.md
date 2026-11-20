@@ -100,3 +100,8 @@ page-budget and formatting contracts.
 Compile the paper and repair all hard validation failures. Finish only when `paper.pdf` is current
 with `paper.tex` and the manuscript, grounding ledger, scope audit, tables, figures, captions, and
 limitations agree.
+
+Apply the writing-style rules below to every passage you revise. They govern wording and
+placement within the revision boundary above; they do not license new analysis or numbers.
+
+{{PAPER_WRITING_STYLE}}

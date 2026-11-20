@@ -248,6 +248,8 @@ Before writing the abstract, privately sketch the broad context, the concrete se
 12. Keep the paper self-contained so a reader can understand the problem, approach, and findings without knowing anything about the underlying agent pipeline.
 13. Before finalizing, scan the manuscript text and remove any residual wording that exposes the run structure rather than the scientific story.
 
+{{PAPER_WRITING_STYLE}}
+
 # Method Section Detail Requirements
 The Method section must include clear subsections (or equivalent paragraph headings) covering:
 1. Problem setup:
@@ -284,6 +286,7 @@ Organize Results like a normal ML paper, with subsections such as:
 - Limitations discussion
 
 Prefer synthesis over chronology.
+Follow the `# Writing Style` rules above for how results are stated.
 Default to direct comparison views, transfer analysis, ablations, and failure analysis.
 Use progression plots only when the central claim is explicitly about optimization dynamics or sample efficiency, and when a static comparison cannot carry the point.
 Do not default to progression plots when direct comparison plots tell the story more clearly.
