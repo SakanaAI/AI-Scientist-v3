@@ -14,7 +14,7 @@ Write for a reader who will skim the abstract, look at the figures, and read the
 3. Report each effect once, against one clearly named reference. Put alternative references or robustness variants of the same effect in Supplementary Information.
 4. Write results as paragraphs, not bullet lists. Use bullets only for genuine enumerations such as compared configurations or limitations.
 5. Keep secondary statistical machinery (attribution games, bounds, worst-case pairings, extra significance variants) in Supplementary Information and summarize its conclusion in one sentence in the main text.
-6. State an unverified mechanism in at most one sentence, explicitly labeled as a hypothesis, or omit it. Do not narrate work that was not done ("we have not verified", "we did not profile", "was not inspected") in Results; state each such gap once, in Limitations.
+6. State an unverified mechanism in at most one sentence, explicitly labeled as a hypothesis, or omit it. Do not narrate work that was not done ("we have not verified", "we did not profile", "was not inspected") in Results; state each such gap once, in the paper's limitations discussion (the Limitations section, or the threats-to-validity subsection when there is no separate Limitations section).
 7. Summarize unreplicated exploratory runs in one or two sentences in the main text; give their details in Supplementary Information.
 8. Report measured outcomes. Do not compare results against numeric pre-run expectations or specification estimates; these are internal planning artifacts, not findings. For an ablation with a recorded hypothesis, state in one clause whether the measured outcome supports it.
 9. Keep the search process out of results prose and captions: search-time scores of selected configurations, counts of runs explored or unscored, and which configuration each exploratory run started from belong in the experimental protocol and Supplementary Information. Two exceptions apply:
@@ -24,7 +24,7 @@ Write for a reader who will skim the abstract, look at the figures, and read the
 ## Consistency
 1. Match numeric precision to the measured uncertainty. In prose, round differences to about one digit beyond the noise scale (for example 0.009 rather than 0.0095 when the run-to-run spread is about 0.001); full precision belongs in tables.
 2. Keep claim strength identical across abstract, introduction, results, and conclusion. Use words like "strong" or "robust" only where the evidence supports them everywhere they appear.
-3. Use one name per concept, method, and baseline throughout, defined once in the Method section.
+3. Use one name per concept, method, and baseline throughout. Introduce each name at first use, define it formally in the Method section, and never rename it later.
 4. Do not repeat the same headline numbers in every section. The conclusion synthesizes and states implications; it does not recap the numbers.
 
 ## Prose
