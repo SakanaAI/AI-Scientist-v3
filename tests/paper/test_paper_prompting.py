@@ -588,13 +588,29 @@ done
 
 # ── shared writing-style rules reach every manuscript writer ──
 
-STYLE_TEMPLATES = WRITER_TEMPLATES
+STYLE_RULES = (
+    "Report at most two headline numbers",
+    "one of them is the quantity named in its `central_thesis`",
+    "A failed final qualification is a finding, not a limiting clause",
+    "Closing sentences that place the results in a broader context are optional and count toward the target",
+    "state in one clause whether the measured outcome supports it",
+    "When no qualifying winner was found, search coverage from `study.*`",
+    "A figure whose subject is the search itself",
+    "the threats-to-validity subsection when there is no separate Limitations section",
+    "Introduce each name at first use",
+)
 
 
-@pytest.mark.parametrize("template", STYLE_TEMPLATES)
+@pytest.mark.parametrize("template", WRITER_TEMPLATES)
 def test_rendered_writer_prompts_include_shared_writing_style_once(
     template: str, tmp_path: Path
 ) -> None:
     rendered = _render(template, tmp_path)
     assert rendered.count("# Writing Style\n") == 1
-    assert "PAPER_WRITING_STYLE" not in rendered
+    for rule in STYLE_RULES:
+        assert rule in rendered, rule
+
+
+def test_strategy_prompt_limits_central_thesis_to_one_quantity() -> None:
+    strategy = (Path("src/prompts") / "paper_strategy.md").read_text()
+    assert "at most one interpretable quantity" in strategy
