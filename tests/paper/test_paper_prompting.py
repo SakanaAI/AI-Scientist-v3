@@ -588,7 +588,7 @@ done
 
 # ── shared writing-style rules reach every manuscript writer ──
 
-STYLE_TEMPLATES = ("paper.md", "paper_standalone.md", "paper_edit_standalone.md")
+STYLE_TEMPLATES = WRITER_TEMPLATES
 
 
 @pytest.mark.parametrize("template", STYLE_TEMPLATES)
