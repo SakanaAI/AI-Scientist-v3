@@ -2,11 +2,11 @@
 Write for a reader who will skim the abstract, look at the figures, and read the results once.
 
 ## Abstract
-1. Report at most two headline numbers. Express the main effect in interpretable terms (relative change, multiple of the measured noise, or position relative to a known reference) rather than a list of raw full-precision values.
+1. Report at most two headline numbers. Express the main effect in interpretable terms (relative change, multiple of the measured noise, or position relative to a known reference) rather than a list of raw full-precision values. When a paper strategy is provided, one of them is the quantity named in its `central_thesis`.
 2. Keep per-ablation deltas, statistical procedure (z-scores, pooled standard deviations, intervals, degrees of freedom), and internal configuration names out of the abstract. A qualitative sentence such as "most of the gain depends on component X" is enough.
 3. Define or avoid subfield jargon so a researcher from a neighboring area can follow it.
-4. End on the takeaway or implication of the work. Do not end on a list of null, borderline, or unresolved findings; one limiting clause is enough.
-5. Stay within the abstract word target. Give background and setting in one or two sentences, then spend the remaining words on the method, the main finding, and the takeaway.
+4. End on the takeaway or implication of the work. Do not end on a list of null, borderline, or unresolved findings; one limiting clause is enough. A failed final qualification is a finding, not a limiting clause: state it plainly in the abstract.
+5. Stay within the abstract word target. Give background and setting in one or two sentences, then spend the remaining words on the method, the main finding, and the takeaway. Closing sentences that place the results in a broader context are optional and count toward the target.
 
 ## Results
 1. Open each paragraph with its finding stated as a claim, then point to the evidence (table or figure), then give the caveat. Write the claim as an ordinary sentence; do not bold or otherwise typeset it as a pull quote.
